@@ -512,7 +512,7 @@ function invalidateQuote(){
   $("launchBtn").disabled = true;
 }
 
-function updateInitialBuyUI(){
+function updateInitialBuyUI(preserveQuote=false){
   try{
     const buy = currentInitialBuy();
     $("initialBuyStatus").textContent = buy > 0n ? formatEther(buy) + " HYPE" : "0 HYPE";
@@ -533,7 +533,10 @@ function updateInitialBuyUI(){
     $("initialBuyStatus").className = "bad";
     $("initialBuySummary").textContent = cleanError(e);
   }
-  invalidateQuote();
+
+  // User edits should invalidate a quote, but merely refreshing live
+  // factory state during Quote/Preflight must NOT erase a valid quote.
+  if(!preserveQuote) invalidateQuote();
 }
 
 function toQty(v){
@@ -695,7 +698,7 @@ async function refreshFactory(){
   $("graduationStatus").textContent =
     formatEther(factoryState.graduation) + " HYPE";
 
-  updateInitialBuyUI();
+  updateInitialBuyUI(true);
 
   log(
     "Factory live: paused=" + factoryState.paused +
@@ -1001,8 +1004,17 @@ async function preflight(){
     const minTokensOut = currentMinTokensOut();
     if(initialBuy <= 0n)
       throw new Error("Enter an Initial Buy amount greater than 0 HYPE.");
-    if(!quoteFingerprint || quoteFingerprint !== makeQuoteFingerprint() || quotedMinOut <= 0n)
-      throw new Error("Initial-buy quote is missing or stale. Click Quote Initial Buy again.");
+    if(!quoteFingerprint || quotedMinOut <= 0n)
+      throw new Error("Initial-buy quote is missing. Click Quote Initial Buy first.");
+
+    const currentFingerprint = makeQuoteFingerprint();
+    if(quoteFingerprint !== currentFingerprint){
+      console.warn("Quote fingerprint mismatch", {
+        quoted: quoteFingerprint,
+        current: currentFingerprint
+      });
+      throw new Error("Initial-buy quote became stale because a launch field changed. Quote again.");
+    }
 
     const totalValue = factoryState.fee + initialBuy;
     const balanceHex = await walletRpc("eth_getBalance",[connectedAddress,"latest"]);
@@ -1115,8 +1127,11 @@ async function launch(){
     const initialBuy = currentInitialBuy();
     const minTokensOut = currentMinTokensOut();
     if(initialBuy <= 0n) throw new Error("Initial Buy must be greater than 0 HYPE.");
-    if(!quoteFingerprint || quoteFingerprint !== makeQuoteFingerprint() || quotedMinOut <= 0n)
-      throw new Error("Initial-buy quote is missing or stale. Quote again and rerun preflight.");
+    if(!quoteFingerprint || quotedMinOut <= 0n)
+      throw new Error("Initial-buy quote is missing. Quote again and rerun preflight.");
+
+    if(quoteFingerprint !== makeQuoteFingerprint())
+      throw new Error("Initial-buy quote became stale because a launch field changed. Quote again and rerun preflight.");
     const totalValue = factoryState.fee + initialBuy;
 
     /* Fresh deadline and fresh gas estimate immediately before signing. */
