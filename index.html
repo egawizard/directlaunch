@@ -6,7 +6,6 @@
 <meta name="color-scheme" content="dark">
 <title>LAWLESS Direct Launcher // motion.meme HyperEVM</title>
 <meta name="description" content="Direct $LAWLESS launcher for the verified motion.meme factory on HyperEVM.">
-<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.min.js"></script>
 <style>
 :root{
   --bg:#050505;--panel:#0e1014;--panel2:#14171d;--line:rgba(255,255,255,.1);
@@ -276,297 +275,725 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line);padding:22px
 
 <footer>
 <div class="container">
-  This utility is a direct contract interface, not an official motion.meme frontend. Always verify the factory address and wallet transaction details before signing. Factory configuration can change on-chain; the launcher reads critical values live before launch.
+  This utility is a direct contract interface with no external JavaScript library dependency, not an official motion.meme frontend. Always verify the factory address and wallet transaction details before signing. Factory configuration can change on-chain; the launcher reads critical values live before launch.
 </div>
 </footer>
 
 <script>
+/*
+  LAWLESS DIRECT LAUNCHER — ZERO EXTERNAL JS DEPENDENCIES
+  Uses native EIP-1193 wallet JSON-RPC only.
+*/
 const FACTORY = "0x7211AdC46A9D777b9b21Ce472cb3C0aA85193C9c";
-const CHAIN_ID = 999n;
+const CHAIN_ID_DEC = 999;
 const CHAIN_HEX = "0x3e7";
 const RPC = "https://rpc.hyperliquid.xyz/evm";
 const EXPLORER = "https://hyperevmscan.io";
-const ABI = [
-  "function launchFee() view returns (uint256)",
-  "function paused() view returns (bool)",
-  "function TOTAL_SUPPLY() view returns (uint256)",
-  "function graduationTarget() view returns (uint256)",
-  "function MAX_NAME_BYTES() view returns (uint256)",
-  "function MAX_SYMBOL_BYTES() view returns (uint256)",
-  "function MAX_METADATA_URI_BYTES() view returns (uint256)",
-  "function launchCount() view returns (uint256)",
-  "function createToken(string name,string symbol,string metadataURI,uint256 minTokensOut,uint256 deadline) payable returns (address tokenAddress,address poolAddress)",
-  "event TokenCreated(address indexed token,address indexed pool,address indexed creator,string name,string symbol,string metadataURI)"
-];
 
-let browserProvider = null, signer = null, walletFactory = null;
-let readProvider = null, readFactory = null;
+const SELECTOR = {
+  launchFee: "0xcf3cf573",
+  paused: "0x5c975abb",
+  totalSupply: "0x902d55a5",
+  graduationTarget: "0xa4b20f13",
+  maxName: "0x680c60c7",
+  maxSymbol: "0x8a4940f2",
+  maxMetadata: "0x4e6b0bbe",
+  launchCount: "0x27cca59f",
+  createToken: "bdaf068c"
+};
+
+const TOKEN_CREATED_TOPIC =
+  "0x0b4cfda446fdf9ec5a85855f088c154869eb62e3e723d7d80319b680f90e0cfd";
+
+let connectedAddress = null;
 let factoryState = null;
 let preflightOK = false;
 let estimatedGas = null;
-let connectedAddress = null;
+let rpcId = 1;
 
 const $ = id => document.getElementById(id);
-const log = (msg, cls="") => {
-  const d=document.createElement("div"); d.className="log "+cls; d.textContent=msg;
-  $("console").appendChild(d); $("console").scrollTop=$("console").scrollHeight;
-};
-const utf8Bytes = s => new TextEncoder().encode(s).length;
-const short = a => a ? a.slice(0,6)+"…"+a.slice(-4) : "—";
+
+function log(msg, cls=""){
+  const d = document.createElement("div");
+  d.className = "log " + cls;
+  d.textContent = msg;
+  $("console").appendChild(d);
+  $("console").scrollTop = $("console").scrollHeight;
+}
+
+function cleanError(e){
+  return e?.data?.message || e?.message || String(e);
+}
+
+function utf8Bytes(s){
+  return new TextEncoder().encode(s).length;
+}
+
+function bytesToHex(bytes){
+  return Array.from(bytes, b => b.toString(16).padStart(2,"0")).join("");
+}
+
+function utf8Hex(s){
+  return bytesToHex(new TextEncoder().encode(s));
+}
+
+function word(v){
+  return BigInt(v).toString(16).padStart(64,"0");
+}
+
+function encodeString(s){
+  const h = utf8Hex(s);
+  const byteLen = h.length / 2;
+  const paddedBytes = Math.ceil(byteLen / 32) * 32;
+  return word(byteLen) + h.padEnd(paddedBytes * 2, "0");
+}
+
+function encodeCreateToken(name, symbol, metadataURI, minTokensOut, deadline){
+  const a = encodeString(name);
+  const b = encodeString(symbol);
+  const c = encodeString(metadataURI);
+
+  const headBytes = 32 * 5;
+  const offA = headBytes;
+  const offB = offA + a.length / 2;
+  const offC = offB + b.length / 2;
+
+  return "0x" + SELECTOR.createToken
+    + word(offA)
+    + word(offB)
+    + word(offC)
+    + word(minTokensOut)
+    + word(deadline)
+    + a + b + c;
+}
+
+function decodeUint(hex){
+  if(!hex || hex === "0x") throw new Error("Empty contract response");
+  return BigInt(hex);
+}
+
+function formatEther(v, precision=8){
+  v = BigInt(v);
+  const neg = v < 0n;
+  if(neg) v = -v;
+  const base = 10n ** 18n;
+  const whole = v / base;
+  let frac = (v % base).toString().padStart(18,"0").slice(0,precision);
+  frac = frac.replace(/0+$/,"");
+  return (neg ? "-" : "") + whole.toString() + (frac ? "." + frac : "");
+}
+
+function formatTokenSupply(v){
+  v = BigInt(v);
+  const base = 10n ** 18n;
+  const whole = v / base;
+  return whole.toLocaleString("en-US");
+}
+
+function toQty(v){
+  return "0x" + BigInt(v).toString(16);
+}
+
+function short(a){
+  return a ? a.slice(0,6) + "…" + a.slice(-4) : "—";
+}
+
+function addressFromTopic(topic){
+  if(!topic || topic.length < 42) return "";
+  return "0x" + topic.slice(-40);
+}
+
+async function publicRpc(method, params=[]){
+  const res = await fetch(RPC, {
+    method:"POST",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({jsonrpc:"2.0", id:rpcId++, method, params})
+  });
+  if(!res.ok) throw new Error("RPC HTTP " + res.status);
+  const body = await res.json();
+  if(body.error) throw new Error(body.error.message || JSON.stringify(body.error));
+  return body.result;
+}
+
+async function walletRpc(method, params=[]){
+  if(!window.ethereum) throw new Error("No injected wallet found.");
+  return await window.ethereum.request({method, params});
+}
+
+/* Read using public RPC first; if browser CORS blocks it and the wallet is
+   already on HyperEVM, fall back to the wallet provider. */
+async function readRpc(method, params=[]){
+  try{
+    return await publicRpc(method, params);
+  }catch(publicErr){
+    if(window.ethereum){
+      try{
+        const cid = await walletRpc("eth_chainId");
+        if(BigInt(cid) === BigInt(CHAIN_ID_DEC)){
+          return await walletRpc(method, params);
+        }
+      }catch(_){}
+    }
+    throw publicErr;
+  }
+}
+
+async function contractRead(selector){
+  return await readRpc("eth_call", [{to:FACTORY, data:selector}, "latest"]);
+}
 
 function buildMetadata(){
-  const name=$("name").value.trim(), symbol=$("symbol").value.trim(), description=$("description").value.trim();
-  const image=$("image").value.trim(), website=$("website").value.trim(), twitter=$("twitter").value.trim(), telegram=$("telegram").value.trim();
-  const meta={name,symbol,description};
-  if(image) meta.image=image;
-  if(website){meta.website=website;meta.external_url=website;}
-  if(twitter) meta.twitter=twitter;
-  if(telegram) meta.telegram=telegram;
+  const name = $("name").value.trim();
+  const symbol = $("symbol").value.trim();
+  const description = $("description").value.trim();
+  const image = $("image").value.trim();
+  const website = $("website").value.trim();
+  const twitter = $("twitter").value.trim();
+  const telegram = $("telegram").value.trim();
+
+  const meta = {name, symbol, description};
+  if(image) meta.image = image;
+  if(website){
+    meta.website = website;
+    meta.external_url = website;
+  }
+  if(twitter) meta.twitter = twitter;
+  if(telegram) meta.telegram = telegram;
   return meta;
 }
+
 function metadataURI(){
-  if($("metadataMode").value==="custom") return $("customUri").value.trim();
-  return "data:application/json,"+encodeURIComponent(JSON.stringify(buildMetadata()));
+  if($("metadataMode").value === "custom"){
+    return $("customUri").value.trim();
+  }
+  return "data:application/json," +
+    encodeURIComponent(JSON.stringify(buildMetadata()));
 }
+
 function renderMetadata(){
-  const meta=buildMetadata();
-  $("metadataJson").textContent=JSON.stringify(meta,null,2);
-  const uri=metadataURI();
-  $("metadataBytes").textContent=utf8Bytes(uri)+" URI bytes";
-  $("tokenPreviewName").textContent="$"+($("symbol").value.trim()||"LAWLESS");
-  $("tokenPreviewImg").src=$("image").value.trim()||"https://files.catbox.moe/s7cydo.png";
-  preflightOK=false; $("launchBtn").disabled=true;
+  const meta = buildMetadata();
+  $("metadataJson").textContent = JSON.stringify(meta,null,2);
+  const uri = metadataURI();
+  $("metadataBytes").textContent = utf8Bytes(uri) + " URI bytes";
+  $("tokenPreviewName").textContent =
+    "$" + ($("symbol").value.trim() || "LAWLESS");
+  $("tokenPreviewImg").src =
+    $("image").value.trim() || "https://files.catbox.moe/s7cydo.png";
+  preflightOK = false;
+  $("launchBtn").disabled = true;
 }
-["name","symbol","description","image","website","twitter","telegram","customUri"].forEach(id=>{
-  const e=$(id); if(e) e.addEventListener("input",renderMetadata);
+
+["name","symbol","description","image","website","twitter","telegram","customUri"]
+.forEach(id => {
+  const e = $(id);
+  if(e) e.addEventListener("input", renderMetadata);
 });
-$("metadataMode").addEventListener("change",()=>{
-  $("customUriWrap").style.display=$("metadataMode").value==="custom"?"block":"none";
+
+$("metadataMode").addEventListener("change", () => {
+  $("customUriWrap").style.display =
+    $("metadataMode").value === "custom" ? "block" : "none";
   renderMetadata();
 });
-$("ack").addEventListener("change",()=>{$("launchBtn").disabled=!(preflightOK && $("ack").checked)});
+
+$("ack").addEventListener("change", () => {
+  $("launchBtn").disabled = !(preflightOK && $("ack").checked);
+});
+
+async function refreshFactory(){
+  log("Reading live MotionMemeFactory state...","dim");
+
+  const values = await Promise.all([
+    contractRead(SELECTOR.paused),
+    contractRead(SELECTOR.launchFee),
+    contractRead(SELECTOR.totalSupply),
+    contractRead(SELECTOR.graduationTarget),
+    contractRead(SELECTOR.maxName),
+    contractRead(SELECTOR.maxSymbol),
+    contractRead(SELECTOR.maxMetadata),
+    contractRead(SELECTOR.launchCount)
+  ]);
+
+  factoryState = {
+    paused: decodeUint(values[0]) !== 0n,
+    fee: decodeUint(values[1]),
+    supply: decodeUint(values[2]),
+    graduation: decodeUint(values[3]),
+    maxName: decodeUint(values[4]),
+    maxSymbol: decodeUint(values[5]),
+    maxMeta: decodeUint(values[6]),
+    count: decodeUint(values[7])
+  };
+
+  $("networkStatus").textContent = "HyperEVM #999 ✓";
+  $("networkStatus").className = "good";
+
+  $("pausedStatus").textContent =
+    factoryState.paused ? "PAUSED ✕" : "LIVE ✓";
+  $("pausedStatus").className =
+    factoryState.paused ? "bad" : "good";
+
+  $("feeStatus").textContent =
+    formatEther(factoryState.fee) + " HYPE";
+
+  $("supplyStatus").textContent =
+    formatTokenSupply(factoryState.supply) + " tokens";
+
+  $("graduationStatus").textContent =
+    formatEther(factoryState.graduation) + " HYPE";
+
+  log(
+    "Factory live: paused=" + factoryState.paused +
+    ", launchFee=" + formatEther(factoryState.fee) +
+    " HYPE, launches=" + factoryState.count.toString(),
+    "ok"
+  );
+}
 
 async function initRead(){
-  if(typeof ethers==="undefined"){
-    $("networkStatus").textContent="ethers.js failed to load";
-    $("networkStatus").className="bad";
-    log("ERROR: ethers.js CDN could not load. Check internet access.","err");
-    return;
-  }
   try{
-    readProvider=new ethers.JsonRpcProvider(RPC, Number(CHAIN_ID), {staticNetwork:true});
-    readFactory=new ethers.Contract(FACTORY,ABI,readProvider);
     await refreshFactory();
     await restorePending();
   }catch(e){
-    $("networkStatus").textContent="RPC unavailable";
-    $("networkStatus").className="bad";
-    log("Read RPC error: "+cleanError(e),"err");
+    $("networkStatus").textContent = "Connect wallet to read";
+    $("networkStatus").className = "warn";
+    $("pausedStatus").textContent = "Waiting for wallet/RPC";
+    $("feeStatus").textContent = "Waiting for wallet/RPC";
+    $("supplyStatus").textContent = "Waiting for wallet/RPC";
+    $("graduationStatus").textContent = "Waiting for wallet/RPC";
+    log(
+      "Public RPC could not be read from this browser. This is OK: connect the wallet, switch to HyperEVM, then run preflight. " +
+      cleanError(e),
+      "w"
+    );
   }
 }
-async function refreshFactory(){
-  log("Reading live MotionMemeFactory state...","dim");
-  const [net,paused,fee,supply,graduation,maxName,maxSymbol,maxMeta,count] = await Promise.all([
-    readProvider.getNetwork(), readFactory.paused(), readFactory.launchFee(), readFactory.TOTAL_SUPPLY(),
-    readFactory.graduationTarget(), readFactory.MAX_NAME_BYTES(), readFactory.MAX_SYMBOL_BYTES(),
-    readFactory.MAX_METADATA_URI_BYTES(), readFactory.launchCount()
-  ]);
-  factoryState={paused,fee,supply,graduation,maxName,maxSymbol,maxMeta,count};
-  $("networkStatus").textContent = net.chainId===CHAIN_ID ? "HyperEVM #999 ✓" : "Unexpected chain";
-  $("networkStatus").className = net.chainId===CHAIN_ID ? "good" : "bad";
-  $("pausedStatus").textContent = paused ? "PAUSED ✕" : "LIVE ✓";
-  $("pausedStatus").className = paused ? "bad" : "good";
-  $("feeStatus").textContent=ethers.formatEther(fee)+" HYPE";
-  $("supplyStatus").textContent=Number(ethers.formatUnits(supply,18)).toLocaleString("en-US")+" tokens";
-  $("graduationStatus").textContent=ethers.formatEther(graduation)+" HYPE";
-  log(`Factory live: paused=${paused}, launchFee=${ethers.formatEther(fee)} HYPE, launches=${count}`,"ok");
-}
+
 async function connect(){
-  if(!window.ethereum){log("No injected wallet found. Open this file in a browser with MetaMask/Rabby.","err");return false}
-  try{
-    browserProvider=new ethers.BrowserProvider(window.ethereum);
-    await browserProvider.send("eth_requestAccounts",[]);
-    signer=await browserProvider.getSigner();
-    connectedAddress=await signer.getAddress();
-    walletFactory=new ethers.Contract(FACTORY,ABI,signer);
-    const net=await browserProvider.getNetwork();
-    $("walletStatus").textContent=short(connectedAddress);
-    $("walletStatus").className="good";
-    $("networkStatus").textContent=net.chainId===CHAIN_ID?"HyperEVM #999 ✓":"Wrong chain: "+net.chainId;
-    $("networkStatus").className=net.chainId===CHAIN_ID?"good":"warn";
-    log("Wallet connected: "+connectedAddress,"ok");
-    return true;
-  }catch(e){log("Wallet connection failed: "+cleanError(e),"err");return false}
-}
-async function switchNetwork(){
-  if(!window.ethereum){log("No injected wallet found.","err");return false}
-  try{
-    await window.ethereum.request({method:"wallet_switchEthereumChain",params:[{chainId:CHAIN_HEX}]});
-  }catch(e){
-    if(e.code===4902 || /Unrecognized chain|not added/i.test(e.message||"")){
-      await window.ethereum.request({method:"wallet_addEthereumChain",params:[{
-        chainId:CHAIN_HEX,chainName:"HyperEVM",nativeCurrency:{name:"HYPE",symbol:"HYPE",decimals:18},
-        rpcUrls:[RPC],blockExplorerUrls:[EXPLORER]
-      }]});
-    } else {log("Network switch failed: "+cleanError(e),"err");return false}
+  if(!window.ethereum){
+    log(
+      "No injected wallet found. Open this page in a browser with MetaMask or Rabby.",
+      "err"
+    );
+    return false;
   }
-  return connect();
+  try{
+    const accounts = await walletRpc("eth_requestAccounts");
+    connectedAddress = accounts?.[0] || null;
+    if(!connectedAddress) throw new Error("Wallet returned no account.");
+
+    const cid = await walletRpc("eth_chainId");
+    $("walletStatus").textContent = short(connectedAddress);
+    $("walletStatus").className = "good";
+
+    if(BigInt(cid) === BigInt(CHAIN_ID_DEC)){
+      $("networkStatus").textContent = "HyperEVM #999 ✓";
+      $("networkStatus").className = "good";
+      try{ await refreshFactory(); }catch(e){
+        log("Factory read after wallet connect failed: " + cleanError(e),"err");
+      }
+    }else{
+      $("networkStatus").textContent =
+        "Wrong chain: " + BigInt(cid).toString();
+      $("networkStatus").className = "warn";
+    }
+
+    log("Wallet connected: " + connectedAddress,"ok");
+    return true;
+  }catch(e){
+    log("Wallet connection failed: " + cleanError(e),"err");
+    return false;
+  }
 }
-function cleanError(e){
-  return e?.shortMessage || e?.reason || e?.info?.error?.message || e?.message || String(e);
+
+async function switchNetwork(){
+  if(!window.ethereum){
+    log("No injected wallet found.","err");
+    return false;
+  }
+  try{
+    await walletRpc("wallet_switchEthereumChain", [{chainId:CHAIN_HEX}]);
+  }catch(e){
+    if(e?.code === 4902 || /Unrecognized chain|not added/i.test(e?.message || "")){
+      try{
+        await walletRpc("wallet_addEthereumChain", [{
+          chainId: CHAIN_HEX,
+          chainName: "HyperEVM",
+          nativeCurrency: {name:"HYPE", symbol:"HYPE", decimals:18},
+          rpcUrls: [RPC],
+          blockExplorerUrls: [EXPLORER]
+        }]);
+      }catch(addErr){
+        log("Adding HyperEVM failed: " + cleanError(addErr),"err");
+        return false;
+      }
+    }else{
+      log("Network switch failed: " + cleanError(e),"err");
+      return false;
+    }
+  }
+  return await connect();
 }
+
 async function ensureWalletChain(){
-  if(!signer){if(!await connect()) return false}
-  const net=await browserProvider.getNetwork();
-  if(net.chainId!==CHAIN_ID){log("Wallet is not on HyperEVM. Switching...","w"); if(!await switchNetwork())return false}
+  if(!connectedAddress){
+    if(!await connect()) return false;
+  }
+  const cid = await walletRpc("eth_chainId");
+  if(BigInt(cid) !== BigInt(CHAIN_ID_DEC)){
+    log("Wallet is not on HyperEVM. Switching...","w");
+    if(!await switchNetwork()) return false;
+  }
   return true;
 }
+
 function validateFields(){
   if(!factoryState) throw new Error("Factory state not loaded.");
-  const name=$("name").value.trim(), symbol=$("symbol").value.trim(), uri=metadataURI();
+
+  const name = $("name").value.trim();
+  const symbol = $("symbol").value.trim();
+  const uri = metadataURI();
+
   if(!name) throw new Error("Token name is required.");
   if(!symbol) throw new Error("Token symbol is required.");
   if(!uri) throw new Error("Metadata URI is required.");
-  const nb=utf8Bytes(name), sb=utf8Bytes(symbol), mb=utf8Bytes(uri);
-  if(nb>Number(factoryState.maxName)) throw new Error(`Name is ${nb} bytes; factory max is ${factoryState.maxName}.`);
-  if(sb>Number(factoryState.maxSymbol)) throw new Error(`Symbol is ${sb} bytes; factory max is ${factoryState.maxSymbol}.`);
-  if(mb>Number(factoryState.maxMeta)) throw new Error(`Metadata URI is ${mb} bytes; factory max is ${factoryState.maxMeta}. Use a shorter description or an IPFS URI.`);
-  if(factoryState.paused) throw new Error("Factory launches are currently paused on-chain.");
-  return {name,symbol,uri};
+
+  const nb = utf8Bytes(name);
+  const sb = utf8Bytes(symbol);
+  const mb = utf8Bytes(uri);
+
+  if(nb > Number(factoryState.maxName))
+    throw new Error(`Name is ${nb} bytes; factory max is ${factoryState.maxName}.`);
+
+  if(sb > Number(factoryState.maxSymbol))
+    throw new Error(`Symbol is ${sb} bytes; factory max is ${factoryState.maxSymbol}.`);
+
+  if(mb > Number(factoryState.maxMeta))
+    throw new Error(
+      `Metadata URI is ${mb} bytes; factory max is ${factoryState.maxMeta}. ` +
+      `Use a shorter description or a custom/IPFS metadata URI.`
+    );
+
+  if(factoryState.paused)
+    throw new Error("Factory launches are currently paused on-chain.");
+
+  return {name, symbol, uri};
 }
+
 async function checkPending(){
-  const raw=localStorage.getItem("lawlessPendingTx");
-  if(!raw)return false;
+  const raw = localStorage.getItem("lawlessPendingTx");
+  if(!raw) return false;
+
   try{
-    const p=JSON.parse(raw);
-    const receipt=await readProvider.getTransactionReceipt(p.hash);
+    const p = JSON.parse(raw);
+    const receipt = await readRpc("eth_getTransactionReceipt",[p.hash]);
+
     if(!receipt){
-      $("pendingBox").style.display="block";
-      $("pendingBox").innerHTML=`Pending launch tracked locally:<br><span class="address">${p.hash}</span><br><br>Do not submit another launch. Speed up/replace this transaction in your wallet if necessary.`;
+      $("pendingBox").style.display = "block";
+      $("pendingBox").innerHTML =
+        `Pending launch tracked locally:<br>` +
+        `<span class="address">${p.hash}</span><br><br>` +
+        `Do not submit another launch. Use your wallet's Speed Up / Replace if necessary.`;
       return true;
     }
+
     localStorage.removeItem("lawlessPendingTx");
-    $("pendingBox").style.display="none";
-    if(receipt.status===1) showReceipt(receipt);
+    $("pendingBox").style.display = "none";
+
+    if(BigInt(receipt.status || "0x0") === 1n)
+      showReceipt(receipt);
+
     return false;
-  }catch(e){return false}
-}
-async function restorePending(){
-  const pending=await checkPending();
-  if(pending){log("A locally tracked launch transaction is still pending. New launch blocked.","w")}
-}
-async function preflight(){
-  preflightOK=false;$("launchBtn").disabled=true;$("gasStatus").textContent="Checking...";
-  try{
-    await refreshFactory();
-    if(await checkPending()) throw new Error("A previous launch transaction is still pending.");
-    if(!await ensureWalletChain()) throw new Error("Wallet connection/network check failed.");
-    const {name,symbol,uri}=validateFields();
-    const walletAddr=await signer.getAddress();
-    const balance=await browserProvider.getBalance(walletAddr);
-    if(balance<=factoryState.fee) throw new Error(`Wallet balance ${ethers.formatEther(balance)} HYPE is not enough for launchFee + gas.`);
-    const deadline=BigInt(Math.floor(Date.now()/1000)+600);
-    log(`Estimating createToken("${name}","${symbol}", metadata, 0, +10min) with value ${ethers.formatEther(factoryState.fee)} HYPE...`,"dim");
-    estimatedGas=await walletFactory.createToken.estimateGas(name,symbol,uri,0n,deadline,{value:factoryState.fee});
-    const gasWithBuffer=estimatedGas*125n/100n;
-    const feeData=await browserProvider.getFeeData();
-    const gasPrice=feeData.maxFeePerGas || feeData.gasPrice || 0n;
-    const maxGasCost=gasWithBuffer*gasPrice;
-    const requiredBalance=factoryState.fee+maxGasCost;
-    if(gasPrice>0n && balance<requiredBalance){
-      throw new Error(`Wallet balance ${ethers.formatEther(balance)} HYPE may be insufficient. Approx. launch fee + buffered gas requires up to ${ethers.formatEther(requiredBalance)} HYPE at current fee data.`);
-    }
-    $("gasStatus").textContent=estimatedGas.toLocaleString()+" (est.)";
-    $("gasStatus").className="good";
-    log(`Preflight passed. Estimated gas ${estimatedGas}; launcher will use ~25% gas-limit buffer (${gasWithBuffer}).`,"ok");
-    log(`Wallet balance: ${ethers.formatEther(balance)} HYPE. Factory launch fee: ${ethers.formatEther(factoryState.fee)} HYPE.`,"ok");
-    if(gasPrice>0n) log(`Approx. buffered gas ceiling at current fee data: ${ethers.formatEther(maxGasCost)} HYPE.`,"dim");
-    preflightOK=true;
-    $("launchBtn").disabled=!$("ack").checked;
   }catch(e){
-    $("gasStatus").textContent="Preflight failed";
-    $("gasStatus").className="bad";
-    log("PREFLIGHT FAILED: "+cleanError(e),"err");
+    log("Pending transaction check warning: " + cleanError(e),"w");
+    return false;
   }
 }
+
+async function restorePending(){
+  const pending = await checkPending();
+  if(pending)
+    log("A locally tracked launch transaction is still pending. New launch blocked.","w");
+}
+
+async function preflight(){
+  preflightOK = false;
+  $("launchBtn").disabled = true;
+  $("gasStatus").textContent = "Checking...";
+  $("gasStatus").className = "";
+
+  try{
+    if(!await ensureWalletChain())
+      throw new Error("Wallet connection/network check failed.");
+
+    await refreshFactory();
+
+    if(await checkPending())
+      throw new Error("A previous launch transaction is still pending.");
+
+    const {name,symbol,uri} = validateFields();
+    const balanceHex = await walletRpc("eth_getBalance",[connectedAddress,"latest"]);
+    const balance = BigInt(balanceHex);
+
+    if(balance <= factoryState.fee)
+      throw new Error(
+        `Wallet balance ${formatEther(balance)} HYPE is not enough for launch fee + gas.`
+      );
+
+    const deadline = BigInt(Math.floor(Date.now()/1000) + 600);
+    const data = encodeCreateToken(name,symbol,uri,0n,deadline);
+
+    const txForEstimate = {
+      from: connectedAddress,
+      to: FACTORY,
+      value: toQty(factoryState.fee),
+      data
+    };
+
+    log(
+      `Estimating createToken("${name}","${symbol}", metadata, 0, +10min) ` +
+      `with value ${formatEther(factoryState.fee)} HYPE...`,
+      "dim"
+    );
+
+    const gasHex = await walletRpc("eth_estimateGas",[txForEstimate]);
+    estimatedGas = BigInt(gasHex);
+    const gasWithBuffer = estimatedGas * 125n / 100n;
+
+    let gasPrice = 0n;
+    try{
+      gasPrice = BigInt(await walletRpc("eth_gasPrice"));
+    }catch(_){}
+
+    if(gasPrice > 0n){
+      const maxGasCost = gasWithBuffer * gasPrice;
+      const required = factoryState.fee + maxGasCost;
+      if(balance < required){
+        throw new Error(
+          `Wallet balance ${formatEther(balance)} HYPE may be insufficient. ` +
+          `Approx. launch fee + buffered gas requires up to ${formatEther(required)} HYPE.`
+        );
+      }
+      log(
+        `Approx. buffered gas ceiling at current gas price: ${formatEther(maxGasCost)} HYPE.`,
+        "dim"
+      );
+    }
+
+    $("gasStatus").textContent =
+      estimatedGas.toLocaleString("en-US") + " (est.)";
+    $("gasStatus").className = "good";
+
+    log(
+      `Preflight passed. Estimated gas ${estimatedGas}; ` +
+      `launcher will use a 25% gas-limit buffer (${gasWithBuffer}).`,
+      "ok"
+    );
+    log(
+      `Wallet balance: ${formatEther(balance)} HYPE. ` +
+      `Factory launch fee: ${formatEther(factoryState.fee)} HYPE.`,
+      "ok"
+    );
+
+    preflightOK = true;
+    $("launchBtn").disabled = !$("ack").checked;
+
+  }catch(e){
+    $("gasStatus").textContent = "Preflight failed";
+    $("gasStatus").className = "bad";
+    log("PREFLIGHT FAILED: " + cleanError(e),"err");
+  }
+}
+
+async function waitForReceipt(hash, timeoutMs=240000){
+  const start = Date.now();
+  while(Date.now() - start < timeoutMs){
+    try{
+      const receipt = await walletRpc("eth_getTransactionReceipt",[hash]);
+      if(receipt) return receipt;
+    }catch(_){}
+    await new Promise(r => setTimeout(r,2200));
+  }
+  throw new Error(
+    "Transaction is still pending after 4 minutes. Do not launch again. " +
+    "Check it in your wallet or HyperEVMScan and use Speed Up / Replace if needed."
+  );
+}
+
 async function launch(){
-  if(!preflightOK || !$("ack").checked){log("Run a successful preflight and accept the acknowledgement first.","w");return}
-  if(!await ensureWalletChain())return;
-  if(await checkPending()){log("Launch blocked: existing pending transaction.","err");return}
+  if(!preflightOK || !$("ack").checked){
+    log("Run a successful preflight and accept the acknowledgement first.","w");
+    return;
+  }
+
+  if(!await ensureWalletChain()) return;
+
+  if(await checkPending()){
+    log("Launch blocked: an existing launch transaction is pending.","err");
+    return;
+  }
+
   try{
     await refreshFactory();
-    const {name,symbol,uri}=validateFields();
-    const deadline=BigInt(Math.floor(Date.now()/1000)+600);
-    const est=await walletFactory.createToken.estimateGas(name,symbol,uri,0n,deadline,{value:factoryState.fee});
-    const gasLimit=est*125n/100n;
-    const confirmation=confirm(
+    const {name,symbol,uri} = validateFields();
+
+    /* Fresh deadline and fresh gas estimate immediately before signing. */
+    const deadline = BigInt(Math.floor(Date.now()/1000) + 600);
+    const data = encodeCreateToken(name,symbol,uri,0n,deadline);
+
+    const baseTx = {
+      from: connectedAddress,
+      to: FACTORY,
+      value: toQty(factoryState.fee),
+      data
+    };
+
+    const freshGas =
+      BigInt(await walletRpc("eth_estimateGas",[baseTx]));
+    const gasLimit = freshGas * 125n / 100n;
+
+    const confirmation = confirm(
 `REAL HYPEREVM MAINNET LAUNCH
 
 Token: ${name} ($${symbol})
 Factory: ${FACTORY}
-Launch fee: ${ethers.formatEther(factoryState.fee)} HYPE
+Launch fee: ${formatEther(factoryState.fee)} HYPE
 Initial buy: 0 HYPE
 Deadline: +10 minutes
-Estimated gas: ${est}
+Estimated gas: ${freshGas}
 
-This can create a real token. Continue to wallet signature?`
+This can create a real token.
+Continue to wallet signature?`
     );
-    if(!confirmation){log("Launch cancelled before wallet signature.","dim");return}
-    $("launchBtn").disabled=true;
+
+    if(!confirmation){
+      log("Launch cancelled before wallet signature.","dim");
+      return;
+    }
+
+    $("launchBtn").disabled = true;
     log("Requesting wallet signature...","w");
-    const tx=await walletFactory.createToken(name,symbol,uri,0n,deadline,{value:factoryState.fee,gasLimit});
-    localStorage.setItem("lawlessPendingTx",JSON.stringify({hash:tx.hash,account:connectedAddress,time:Date.now()}));
-    log("Transaction submitted: "+tx.hash,"w");
-    log("IMPORTANT: do not launch again while this transaction is pending. Use wallet Speed Up/Replace if needed.","w");
-    $("pendingBox").style.display="block";
-    $("pendingBox").innerHTML=`Pending launch:<br><span class="address">${tx.hash}</span><br><br><a target="_blank" rel="noopener" href="${EXPLORER}/tx/${tx.hash}">View on HyperEVMScan ↗</a>`;
-    const receipt=await tx.wait(1);
+
+    const txHash = await walletRpc("eth_sendTransaction",[{
+      ...baseTx,
+      gas: toQty(gasLimit)
+    }]);
+
+    localStorage.setItem(
+      "lawlessPendingTx",
+      JSON.stringify({
+        hash:txHash,
+        account:connectedAddress,
+        time:Date.now()
+      })
+    );
+
+    log("Transaction submitted: " + txHash,"w");
+    log(
+      "IMPORTANT: do not launch again while this transaction is pending. " +
+      "Use wallet Speed Up / Replace if needed.",
+      "w"
+    );
+
+    $("pendingBox").style.display = "block";
+    $("pendingBox").innerHTML =
+      `Pending launch:<br><span class="address">${txHash}</span><br><br>` +
+      `<a target="_blank" rel="noopener" href="${EXPLORER}/tx/${txHash}">` +
+      `View on HyperEVMScan ↗</a>`;
+
+    const receipt = await waitForReceipt(txHash);
+
+    if(BigInt(receipt.status || "0x0") !== 1n){
+      localStorage.removeItem("lawlessPendingTx");
+      $("pendingBox").style.display = "none";
+      throw new Error("Transaction reverted on-chain.");
+    }
+
     localStorage.removeItem("lawlessPendingTx");
-    $("pendingBox").style.display="none";
-    if(receipt.status!==1) throw new Error("Transaction reverted.");
+    $("pendingBox").style.display = "none";
     showReceipt(receipt);
-    log("LAUNCH CONFIRMED in block "+receipt.blockNumber+" ✓","ok");
+    log(
+      "LAUNCH CONFIRMED in block " + BigInt(receipt.blockNumber).toString() + " ✓",
+      "ok"
+    );
+
   }catch(e){
-    log("LAUNCH ERROR: "+cleanError(e),"err");
-    preflightOK=false;
-    $("launchBtn").disabled=true;
+    log("LAUNCH ERROR: " + cleanError(e),"err");
+    preflightOK = false;
+    $("launchBtn").disabled = true;
   }
 }
+
 function showReceipt(receipt){
-  let token="",pool="";
-  for(const l of receipt.logs||[]){
-    try{
-      const parsed=readFactory.interface.parseLog(l);
-      if(parsed && parsed.name==="TokenCreated"){token=parsed.args.token;pool=parsed.args.pool;break}
-    }catch(e){}
+  let token = "";
+  let pool = "";
+
+  for(const l of receipt.logs || []){
+    if(
+      l.address?.toLowerCase() === FACTORY.toLowerCase() &&
+      l.topics?.[0]?.toLowerCase() === TOKEN_CREATED_TOPIC.toLowerCase()
+    ){
+      token = addressFromTopic(l.topics[1]);
+      pool = addressFromTopic(l.topics[2]);
+      break;
+    }
   }
+
   $("result").classList.add("show");
-  $("resultTx").textContent=receipt.hash||receipt.transactionHash||"";
-  $("resultToken").textContent=token||"TokenCreated event not parsed — inspect transaction";
-  $("resultPool").textContent=pool||"—";
-  const txHash=receipt.hash||receipt.transactionHash||"";
-  $("txExplorer").href=`${EXPLORER}/tx/${txHash}`;
+  $("resultTx").textContent = receipt.transactionHash || "";
+  $("resultToken").textContent =
+    token || "TokenCreated event not parsed — inspect transaction";
+  $("resultPool").textContent = pool || "—";
+
+  const txHash = receipt.transactionHash || "";
+  $("txExplorer").href = `${EXPLORER}/tx/${txHash}`;
+
   if(token){
-    $("tokenExplorer").href=`${EXPLORER}/address/${token}`;
-    $("motionLink").href=`https://motion.meme/coin/${token}`;
+    $("tokenExplorer").href = `${EXPLORER}/address/${token}`;
+    $("motionLink").href = "https://motion.meme/";
   }else{
-    $("tokenExplorer").href=`${EXPLORER}/tx/${txHash}`;
-    $("motionLink").href="https://motion.meme/";
+    $("tokenExplorer").href = `${EXPLORER}/tx/${txHash}`;
+    $("motionLink").href = "https://motion.meme/";
   }
 }
-$("connectBtn").onclick=connect;
-$("switchBtn").onclick=switchNetwork;
-$("preflightBtn").onclick=preflight;
-$("launchBtn").onclick=launch;
-$("clearLockBtn").onclick=()=>{
-  if(confirm("Only clear this local lock if the previous launch transaction was dropped/replaced/confirmed. Clearing it does NOT cancel an on-chain pending transaction. Continue?")){
-    localStorage.removeItem("lawlessPendingTx");$("pendingBox").style.display="none";preflightOK=false;$("launchBtn").disabled=true;log("Local pending lock cleared. Run preflight again before any launch.","w");
+
+$("connectBtn").onclick = connect;
+$("switchBtn").onclick = switchNetwork;
+$("preflightBtn").onclick = preflight;
+$("launchBtn").onclick = launch;
+
+$("clearLockBtn").onclick = () => {
+  if(confirm(
+    "Only clear this local lock if the previous launch transaction was " +
+    "dropped, replaced, or confirmed. Clearing it does NOT cancel an on-chain " +
+    "pending transaction. Continue?"
+  )){
+    localStorage.removeItem("lawlessPendingTx");
+    $("pendingBox").style.display = "none";
+    preflightOK = false;
+    $("launchBtn").disabled = true;
+    log("Local pending lock cleared. Run preflight again before any launch.","w");
   }
 };
+
 if(window.ethereum){
-  window.ethereum.on?.("accountsChanged",()=>{signer=null;walletFactory=null;connectedAddress=null;preflightOK=false;$("launchBtn").disabled=true;connect()});
-  window.ethereum.on?.("chainChanged",()=>{signer=null;walletFactory=null;preflightOK=false;$("launchBtn").disabled=true;connect()});
+  window.ethereum.on?.("accountsChanged", accounts => {
+    connectedAddress = accounts?.[0] || null;
+    preflightOK = false;
+    $("launchBtn").disabled = true;
+    if(connectedAddress) connect();
+    else{
+      $("walletStatus").textContent = "Not connected";
+      $("walletStatus").className = "";
+    }
+  });
+
+  window.ethereum.on?.("chainChanged", () => {
+    preflightOK = false;
+    $("launchBtn").disabled = true;
+    if(connectedAddress) connect();
+  });
 }
+
 renderMetadata();
 initRead();
 </script>
