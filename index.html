@@ -90,6 +90,8 @@ textarea{min-height:92px;resize:vertical;line-height:1.55}
 .result .row{margin-top:8px;color:#d9d3df;word-break:break-all;font-size:.85rem}
 .result a{display:inline-flex;margin:10px 8px 0 0;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.04);text-decoration:none;font-weight:800;font-size:.8rem}
 .mini{font-size:.76rem;color:var(--muted);line-height:1.55}
+.quote-working{animation:quotePulse .9s ease-in-out infinite alternate}
+@keyframes quotePulse{from{opacity:.5}to{opacity:1}}
 .address{font-family:ui-monospace,monospace;word-break:break-all;font-size:.8rem}
 .divider{height:1px;background:var(--line);margin:18px 0}
 .preview-token{display:flex;gap:14px;align-items:center;padding:14px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.03);margin-bottom:14px}
@@ -172,15 +174,41 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line);padding:22px
           <input id="initialBuy" class="input" inputmode="decimal" placeholder="e.g. 0.50" value="">
         </div>
         <div>
-          <label style="margin-top:0">minTokensOut</label>
-          <input id="minTokensOut" class="input" inputmode="numeric" value="0">
+          <label style="margin-top:0">Slippage Protection</label>
+          <select id="slippagePct">
+            <option value="1">1%</option>
+            <option value="3">3%</option>
+            <option value="5" selected>5%</option>
+            <option value="10">10%</option>
+          </select>
         </div>
       </div>
-      <div class="mini">
-        The initial buy is executed atomically by the factory during launch. <strong>minTokensOut = 0</strong> is compatibility mode and avoids quote-mismatch reverts, but it provides no minimum-output protection. Preflight still simulates the exact transaction before signing.
+
+      <div class="actions" style="margin-top:12px">
+        <button class="btn secondary" id="quoteBtn" type="button">Quote Initial Buy</button>
       </div>
+
+      <div class="status-grid" style="margin-top:12px;margin-bottom:0">
+        <div class="status">
+          <span>Expected Token Out</span>
+          <strong id="expectedOutStatus">Quote required</strong>
+        </div>
+        <div class="status">
+          <span>Minimum Token Out</span>
+          <strong id="minOutStatus">Quote required</strong>
+        </div>
+      </div>
+
+      <input id="minTokensOut" type="hidden" value="0">
+
+      <div class="mini" style="margin-top:11px">
+        <strong>Important:</strong> <code>minTokensOut</code> is not the number of tokens you receive.
+        It is the minimum acceptable output. This launcher estimates the creator's atomic initial-buy
+        output by simulating the factory call, then applies your slippage setting automatically.
+      </div>
+
       <div id="initialBuySummary" style="margin-top:11px;color:#cefaff;font-weight:800;font-size:.82rem">
-        Enter an initial-buy amount before preflight.
+        Enter an initial-buy amount, then click Quote Initial Buy.
       </div>
     </div>
 
@@ -270,6 +298,8 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line);padding:22px
       ✓ Factory is not paused<br>
       ✓ Live launch fee is readable<br>
       ✓ Name/symbol/metadata byte limits<br>
+      ✓ Initial-buy output simulated against the factory<br>
+      ✓ Slippage-based <code>minTokensOut</code> generated automatically<br>
       ✓ Initial-buy amount and total HYPE value<br>
       ✓ Wallet HYPE balance covers fee + initial buy + gas<br>
       ✓ <code>createToken()</code> with the exact value passes gas simulation<br>
@@ -331,6 +361,9 @@ let connectedAddress = null;
 let factoryState = null;
 let preflightOK = false;
 let estimatedGas = null;
+let quotedExpectedOut = 0n;
+let quotedMinOut = 0n;
+let quoteFingerprint = "";
 let rpcId = 1;
 
 const $ = id => document.getElementById(id);
@@ -436,6 +469,49 @@ function currentMinTokensOut(){
   return parseUintInput($("minTokensOut")?.value || "0", "minTokensOut");
 }
 
+function formatTokenAmount(raw, decimals=18, maxFrac=4){
+  raw = BigInt(raw);
+  const base = 10n ** BigInt(decimals);
+  const whole = raw / base;
+  let frac = (raw % base).toString().padStart(decimals,"0").slice(0,maxFrac);
+  frac = frac.replace(/0+$/,"");
+  return Number(whole).toLocaleString("en-US") + (frac ? "." + frac : "");
+}
+
+function currentSlippageBps(){
+  const pct = Number($("slippagePct")?.value || "5");
+  if(!Number.isFinite(pct) || pct < 0 || pct >= 100)
+    throw new Error("Invalid slippage setting.");
+  return BigInt(Math.round(pct * 100));
+}
+
+function makeQuoteFingerprint(){
+  return [
+    $("name").value.trim(),
+    $("symbol").value.trim(),
+    metadataURI(),
+    $("initialBuy").value.trim(),
+    $("slippagePct").value
+  ].join("|");
+}
+
+function invalidateQuote(){
+  quotedExpectedOut = 0n;
+  quotedMinOut = 0n;
+  quoteFingerprint = "";
+  $("minTokensOut").value = "0";
+  if($("expectedOutStatus")) {
+    $("expectedOutStatus").textContent = "Quote required";
+    $("expectedOutStatus").className = "warn";
+  }
+  if($("minOutStatus")) {
+    $("minOutStatus").textContent = "Quote required";
+    $("minOutStatus").className = "warn";
+  }
+  preflightOK = false;
+  $("launchBtn").disabled = true;
+}
+
 function updateInitialBuyUI(){
   try{
     const buy = currentInitialBuy();
@@ -457,8 +533,7 @@ function updateInitialBuyUI(){
     $("initialBuyStatus").className = "bad";
     $("initialBuySummary").textContent = cleanError(e);
   }
-  preflightOK = false;
-  $("launchBtn").disabled = true;
+  invalidateQuote();
 }
 
 function toQty(v){
@@ -550,8 +625,7 @@ function renderMetadata(){
     "$" + ($("symbol").value.trim() || "LAWLESS");
   $("tokenPreviewImg").src =
     $("image").value.trim() || "https://files.catbox.moe/s7cydo.png";
-  preflightOK = false;
-  $("launchBtn").disabled = true;
+  invalidateQuote();
 }
 
 ["name","symbol","description","image","website","twitter","telegram","customUri"]
@@ -561,8 +635,12 @@ function renderMetadata(){
 });
 
 
-["initialBuy","minTokensOut"].forEach(id => {
+["initialBuy"].forEach(id => {
   $(id).addEventListener("input", updateInitialBuyUI);
+});
+$("slippagePct").addEventListener("change", () => {
+  invalidateQuote();
+  updateInitialBuyUI();
 });
 
 $("metadataMode").addEventListener("change", () => {
@@ -793,6 +871,116 @@ async function restorePending(){
     log("A locally tracked launch transaction is still pending. New launch blocked.","w");
 }
 
+
+async function simulateCreateWithMinOut(name, symbol, uri, initialBuy, minOut, deadline){
+  const totalValue = factoryState.fee + initialBuy;
+  const data = encodeCreateToken(name, symbol, uri, minOut, deadline);
+  const tx = {
+    from: connectedAddress,
+    to: FACTORY,
+    value: toQty(totalValue),
+    data
+  };
+  return await walletRpc("eth_call", [tx, "latest"]);
+}
+
+async function quoteInitialBuy(){
+  invalidateQuote();
+
+  const btn = $("quoteBtn");
+  btn.disabled = true;
+  btn.textContent = "Quoting...";
+  $("expectedOutStatus").textContent = "Simulating factory...";
+  $("expectedOutStatus").className = "quote-working cyan";
+  $("minOutStatus").textContent = "Waiting...";
+  $("minOutStatus").className = "quote-working";
+
+  try{
+    if(!await ensureWalletChain())
+      throw new Error("Wallet connection/network check failed.");
+
+    await refreshFactory();
+    const {name,symbol,uri} = validateFields();
+
+    const initialBuy = currentInitialBuy();
+    if(initialBuy <= 0n)
+      throw new Error("Enter an Initial Buy amount greater than 0 HYPE.");
+
+    const deadline = BigInt(Math.floor(Date.now()/1000) + 900);
+
+    /* First prove that the exact launch with minOut=0 simulates successfully. */
+    await simulateCreateWithMinOut(name, symbol, uri, initialBuy, 0n, deadline);
+
+    /*
+      The factory ABI exposes minTokensOut but no public quote function.
+      We therefore find the largest minTokensOut that still passes the exact
+      createToken eth_call. The predicate is monotonic:
+        passes <= actual output
+        reverts > actual output
+
+      21 binary-search rounds across the 1B fixed supply gives sub-500-token
+      resolution, plenty for a launch-level slippage guard.
+    */
+    let low = 0n;
+    let high = factoryState.supply + 1n; // known to fail as token output cannot exceed total supply
+
+    for(let i=0; i<21; i++){
+      const mid = (low + high) / 2n;
+      if(mid === low) break;
+      try{
+        await simulateCreateWithMinOut(name, symbol, uri, initialBuy, mid, deadline);
+        low = mid;
+      }catch(_){
+        high = mid;
+      }
+
+      const progress = Math.round(((i+1)/21)*100);
+      $("expectedOutStatus").textContent = "Simulating... " + progress + "%";
+    }
+
+    quotedExpectedOut = low;
+    if(quotedExpectedOut <= 0n)
+      throw new Error("Could not derive a positive initial-buy token output.");
+
+    const bps = currentSlippageBps();
+    quotedMinOut = quotedExpectedOut * (10000n - bps) / 10000n;
+
+    $("minTokensOut").value = quotedMinOut.toString();
+    quoteFingerprint = makeQuoteFingerprint();
+
+    $("expectedOutStatus").textContent =
+      "~" + formatTokenAmount(quotedExpectedOut) + " " + $("symbol").value.trim();
+    $("expectedOutStatus").className = "good";
+
+    $("minOutStatus").textContent =
+      formatTokenAmount(quotedMinOut) + " " + $("symbol").value.trim();
+    $("minOutStatus").className = "good";
+
+    $("initialBuySummary").textContent =
+      `Atomic buy ${formatEther(initialBuy)} HYPE • expected ~${formatTokenAmount(quotedExpectedOut)} ${$("symbol").value.trim()} • ` +
+      `${$("slippagePct").value}% protection → min ${formatTokenAmount(quotedMinOut)} ${$("symbol").value.trim()}.`;
+
+    log(
+      `Initial-buy quote complete: expected ≈ ${formatTokenAmount(quotedExpectedOut)} ${$("symbol").value.trim()}, ` +
+      `minTokensOut=${quotedMinOut} (${formatTokenAmount(quotedMinOut)} tokens) at ${$("slippagePct").value}% slippage.`,
+      "ok"
+    );
+
+  }catch(e){
+    invalidateQuote();
+    $("expectedOutStatus").textContent = "Quote failed";
+    $("expectedOutStatus").className = "bad";
+    $("minOutStatus").textContent = "—";
+    $("minOutStatus").className = "bad";
+    log("QUOTE FAILED: " + cleanError(e), "err");
+  }finally{
+    btn.disabled = false;
+    btn.textContent = "Quote Initial Buy";
+  }
+}
+
+$("quoteBtn").onclick = quoteInitialBuy;
+
 async function preflight(){
   preflightOK = false;
   $("launchBtn").disabled = true;
@@ -813,6 +1001,8 @@ async function preflight(){
     const minTokensOut = currentMinTokensOut();
     if(initialBuy <= 0n)
       throw new Error("Enter an Initial Buy amount greater than 0 HYPE.");
+    if(!quoteFingerprint || quoteFingerprint !== makeQuoteFingerprint() || quotedMinOut <= 0n)
+      throw new Error("Initial-buy quote is missing or stale. Click Quote Initial Buy again.");
 
     const totalValue = factoryState.fee + initialBuy;
     const balanceHex = await walletRpc("eth_getBalance",[connectedAddress,"latest"]);
@@ -908,7 +1098,7 @@ async function waitForReceipt(hash, timeoutMs=240000){
 
 async function launch(){
   if(!preflightOK || !$("ack").checked){
-    log("Run a successful preflight and accept the acknowledgement first.","w");
+    log("Quote the initial buy, run a successful preflight, and accept the acknowledgement first.","w");
     return;
   }
 
@@ -925,6 +1115,8 @@ async function launch(){
     const initialBuy = currentInitialBuy();
     const minTokensOut = currentMinTokensOut();
     if(initialBuy <= 0n) throw new Error("Initial Buy must be greater than 0 HYPE.");
+    if(!quoteFingerprint || quoteFingerprint !== makeQuoteFingerprint() || quotedMinOut <= 0n)
+      throw new Error("Initial-buy quote is missing or stale. Quote again and rerun preflight.");
     const totalValue = factoryState.fee + initialBuy;
 
     /* Fresh deadline and fresh gas estimate immediately before signing. */
@@ -949,12 +1141,15 @@ Token: ${name} ($${symbol})
 Factory: ${FACTORY}
 Launch fee: ${formatEther(factoryState.fee)} HYPE
 Initial buy: ${formatEther(initialBuy)} HYPE
+Expected token out: ~${formatTokenAmount(quotedExpectedOut)} ${symbol}
+Slippage protection: ${$("slippagePct").value}%
+Minimum token out: ${formatTokenAmount(minTokensOut)} ${symbol}
 Total value before gas: ${formatEther(totalValue)} HYPE
-minTokensOut: ${minTokensOut}
 Deadline: +10 minutes
 Estimated gas: ${freshGas}
 
 The initial buy is part of the SAME createToken transaction.
+If output falls below the minimum above, the entire launch reverts.
 Bots cannot insert a separate buy between token creation and this creator buy,
 but they can still trade immediately after your transaction lands.
 
@@ -1093,6 +1288,7 @@ if(window.ethereum){
 
 renderMetadata();
 updateInitialBuyUI();
+invalidateQuote();
 initRead();
 </script>
 </body>
