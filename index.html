@@ -1,1 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>LAWLESS Direct Launcher // motion.meme HyperEVM</title>
+<meta name="description" content="Direct $LAWLESS launcher for the verified motion.meme factory on HyperEVM.">
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.min.js"></script>
+<style>
+:root{
+  --bg:#050505;--panel:#0e1014;--panel2:#14171d;--line:rgba(255,255,255,.1);
+  --text:#f7f4ed;--muted:#aaa4b6;--gold:#ffd166;--red:#ff4d6d;--cyan:#3cefff;
+  --green:#adff7a;--shadow:0 24px 80px rgba(0,0,0,.58)
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:
+    radial-gradient(circle at 15% 5%,rgba(255,77,109,.13),transparent 26%),
+    radial-gradient(circle at 85% 0%,rgba(60,239,255,.11),transparent 22%),
+    radial-gradient(circle at 52% 95%,rgba(255,209,102,.07),transparent 25%),#050505;
+  min-height:100vh;overflow-x:hidden
+}
+h1,h2,h3,.impact{font-family:Impact,Haettenschweiler,"Arial Narrow Bold",sans-serif;text-transform:uppercase;letter-spacing:.035em}
+a{color:inherit}
+button,input,textarea,select{font:inherit}
+button{border:0}
+.container{width:min(1180px,calc(100% - 28px));margin:auto}
+.grid,.scan{position:fixed;inset:0;pointer-events:none}
+.grid{z-index:0;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:36px 36px;mask-image:linear-gradient(#000,transparent 95%)}
+.scan{z-index:1;opacity:.045;background:linear-gradient(rgba(255,255,255,.04) 0 1px,transparent 2px 4px);background-size:100% 4px}
+header{position:relative;z-index:3;padding:22px 0;border-bottom:1px solid var(--line);background:rgba(5,5,5,.62);backdrop-filter:blur(16px)}
+.nav{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px}
+.brand img{width:52px;height:52px;object-fit:contain;border-radius:13px;padding:5px;background:rgba(255,255,255,.05);border:1px solid var(--line)}
+.brand strong{display:block;font-size:1.75rem;line-height:1}
+.brand span{display:block;color:var(--gold);margin-top:5px;font-size:.72rem;letter-spacing:.18em;text-transform:uppercase}
+.network-pill{padding:10px 13px;border-radius:999px;border:1px solid rgba(60,239,255,.18);background:rgba(60,239,255,.07);color:#c7fbff;font-weight:850;font-size:.78rem;letter-spacing:.12em;text-transform:uppercase}
+.hero{position:relative;z-index:2;padding:48px 0 22px}
+.hero-grid{display:grid;grid-template-columns:1fr .8fr;gap:24px;align-items:center}
+.kicker{display:inline-flex;padding:9px 12px;border:1px solid rgba(255,209,102,.2);border-radius:999px;background:rgba(255,209,102,.07);color:#ffe8ad;font-size:.75rem;letter-spacing:.15em;text-transform:uppercase}
+.hero h1{margin:16px 0 10px;font-size:clamp(3.6rem,9vw,7.4rem);line-height:.86;position:relative;display:inline-block}
+.hero h1:before,.hero h1:after{content:attr(data-text);position:absolute;inset:0;pointer-events:none;mix-blend-mode:screen}
+.hero h1:before{color:rgba(60,239,255,.7);transform:translate(2px,0);clip-path:polygon(0 0,100% 0,100% 39%,0 39%);animation:g1 2s infinite alternate}
+.hero h1:after{color:rgba(255,77,109,.7);transform:translate(-2px,0);clip-path:polygon(0 65%,100% 65%,100% 100%,0 100%);animation:g2 1.8s infinite alternate}
+@keyframes g1{50%{transform:translate(-3px,1px)}}@keyframes g2{50%{transform:translate(3px,-1px)}}
+.lead{margin:0;color:var(--muted);line-height:1.8;max-width:670px}
+.hero-card{min-height:330px;border:1px solid var(--line);border-radius:28px;background:url("https://files.catbox.moe/m9wnpd.png") center/cover no-repeat;box-shadow:var(--shadow);position:relative;overflow:hidden;transform:rotate(1.5deg)}
+.hero-card:after{content:"DIRECT // FACTORY // HYPEREVM";position:absolute;inset:auto 14px 14px;padding:11px 13px;border-radius:14px;background:rgba(5,5,5,.72);border:1px solid var(--line);backdrop-filter:blur(10px);font-weight:900;letter-spacing:.13em;font-size:.72rem;text-align:center}
+main{position:relative;z-index:2;padding:24px 0 70px}
+.layout{display:grid;grid-template-columns:1.12fr .88fr;gap:18px;align-items:start}
+.panel{border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02)),linear-gradient(180deg,#101216,#090a0d);border-radius:26px;padding:22px;box-shadow:var(--shadow)}
+.panel h2{margin:0 0 8px;font-size:2rem}
+.sub{margin:0 0 18px;color:var(--muted);line-height:1.65}
+.status-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:18px}
+.status{padding:13px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.03)}
+.status span{display:block;color:var(--muted);font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;margin-bottom:7px}
+.status strong{display:block;font-size:.96rem;line-height:1.4;word-break:break-word}
+.good{color:var(--green)!important}.bad{color:#ff9ab0!important}.warn{color:#ffd889!important}.cyan{color:#bcf8ff!important}
+label{display:block;color:#dcd6e3;font-size:.78rem;letter-spacing:.11em;text-transform:uppercase;font-weight:850;margin:14px 0 7px}
+.input,textarea,select{
+  width:100%;border:1px solid var(--line);background:#07080a;color:#fff;border-radius:15px;padding:13px 14px;outline:none;
+}
+textarea{min-height:92px;resize:vertical;line-height:1.55}
+.input:focus,textarea:focus,select:focus{border-color:rgba(255,209,102,.42);box-shadow:0 0 0 4px rgba(255,209,102,.06)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.meta-preview{margin-top:12px;padding:14px;border:1px dashed rgba(255,209,102,.18);border-radius:16px;background:rgba(255,209,102,.035)}
+.meta-preview pre{white-space:pre-wrap;word-break:break-word;margin:8px 0 0;color:#d8d3df;font-size:.78rem;line-height:1.55;max-height:210px;overflow:auto}
+.meta-top{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
+.meta-top b{font-size:.77rem;letter-spacing:.12em;text-transform:uppercase;color:#ffe1a2}
+.byte{font-family:ui-monospace,monospace;color:var(--muted);font-size:.76rem}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+.btn{appearance:none;cursor:pointer;padding:14px 18px;border-radius:15px;font-weight:950;letter-spacing:.085em;text-transform:uppercase;transition:.2s}
+.btn:hover:not(:disabled){transform:translateY(-2px)}
+.btn:disabled{cursor:not-allowed;opacity:.45}
+.primary{background:linear-gradient(135deg,#fff,var(--gold));color:#090909;box-shadow:0 13px 34px rgba(255,209,102,.14)}
+.secondary{background:rgba(255,255,255,.04);border:1px solid var(--line);color:#fff}
+.danger{background:linear-gradient(135deg,var(--red),var(--cyan));color:#fff;box-shadow:0 14px 36px rgba(255,77,109,.15)}
+.big{width:100%;font-size:1rem;padding:17px 20px;margin-top:12px}
+.console{margin-top:16px;border:1px solid rgba(255,255,255,.07);background:#050608;border-radius:17px;padding:14px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.78rem;line-height:1.65;max-height:300px;overflow:auto}
+.log{margin-bottom:6px;color:#b9f6ff}.log.dim{color:#858b9b}.log.ok{color:#bfff78}.log.err{color:#ff9ab0}.log.w{color:#ffd889}
+.warning-box{padding:14px;border:1px solid rgba(255,77,109,.19);background:rgba(255,77,109,.055);border-radius:17px;color:#f3ced6;line-height:1.65;font-size:.88rem;margin:14px 0}
+.note{padding:13px;border:1px solid rgba(60,239,255,.15);background:rgba(60,239,255,.045);border-radius:16px;color:#cefaff;line-height:1.62;font-size:.84rem}
+.check{display:flex;gap:10px;align-items:flex-start;margin:15px 0;color:#dad3df;font-size:.86rem;line-height:1.55}
+.check input{margin-top:4px;accent-color:var(--gold)}
+.result{display:none;margin-top:16px;padding:17px;border:1px solid rgba(173,255,122,.2);background:rgba(173,255,122,.055);border-radius:18px}
+.result.show{display:block}
+.result h3{margin:0 0 10px;color:#d5ffbd}
+.result .row{margin-top:8px;color:#d9d3df;word-break:break-all;font-size:.85rem}
+.result a{display:inline-flex;margin:10px 8px 0 0;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.04);text-decoration:none;font-weight:800;font-size:.8rem}
+.mini{font-size:.76rem;color:var(--muted);line-height:1.55}
+.address{font-family:ui-monospace,monospace;word-break:break-all;font-size:.8rem}
+.divider{height:1px;background:var(--line);margin:18px 0}
+.preview-token{display:flex;gap:14px;align-items:center;padding:14px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.03);margin-bottom:14px}
+.preview-token img{width:74px;height:74px;object-fit:contain;border-radius:16px;background:#fff}
+.preview-token h3{margin:0;font-size:1.65rem}
+.preview-token p{margin:5px 0 0;color:var(--muted);font-size:.85rem}
+.links{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}
+.links a{font-size:.76rem;color:#c9faff}
+footer{position:relative;z-index:2;border-top:1px solid var(--line);padding:22px 0 38px;color:var(--muted);font-size:.78rem;line-height:1.6}
+@media(max-width:900px){.hero-grid,.layout{grid-template-columns:1fr}.hero-card{min-height:280px}.status-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){.two,.status-grid{grid-template-columns:1fr}.hero{padding-top:34px}.panel{padding:17px}.hero-card{min-height:240px}}
+</style>
+</head>
+<body>
+<div class="grid"></div><div class="scan"></div>
 
+<header>
+  <div class="container nav">
+    <div class="brand">
+      <img src="https://files.catbox.moe/s7cydo.png" alt="LAWLESS logo">
+      <div><strong class="impact">LAWLESS</strong><span>Direct Launcher</span></div>
+    </div>
+    <div class="network-pill">motion.meme // HyperEVM #999</div>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="container hero-grid">
+    <div>
+      <div class="kicker">⚡ Bypass the frontend. Call the factory directly.</div>
+      <h1 data-text="$LAWLESS">$LAWLESS</h1>
+      <p class="lead">A single-file launcher that connects directly to the verified MotionMemeFactory on HyperEVM. It reads the factory state live, checks the fee and pause status, estimates the real launch transaction, then lets your wallet sign the factory call.</p>
+    </div>
+    <div class="hero-card"></div>
+  </div>
+</section>
+
+<main>
+<div class="container layout">
+  <section class="panel">
+    <h2>Launch Configuration</h2>
+    <p class="sub">This launcher creates the token with <strong>no initial buy</strong>. Only the factory's live launch fee is sent. The deadline is generated automatically at signing time.</p>
+
+    <div class="two">
+      <div>
+        <label>Token Name</label>
+        <input id="name" class="input" value="Lawless" maxlength="64">
+      </div>
+      <div>
+        <label>Token Symbol</label>
+        <input id="symbol" class="input" value="LAWLESS" maxlength="32">
+      </div>
+    </div>
+
+    <label>Description</label>
+    <textarea id="description">LAWLESS — No Rules. Just Lore. A meme-powered outlaw community launching on motion.meme, HyperEVM.</textarea>
+
+    <label>Token Image URL</label>
+    <input id="image" class="input" value="https://files.catbox.moe/s7cydo.png">
+
+    <div class="two">
+      <div>
+        <label>Website <span style="color:var(--muted)">(optional)</span></label>
+        <input id="website" class="input" placeholder="https://...">
+      </div>
+      <div>
+        <label>X / Twitter <span style="color:var(--muted)">(optional)</span></label>
+        <input id="twitter" class="input" placeholder="TBA / https://x.com/...">
+      </div>
+    </div>
+
+    <label>Telegram <span style="color:var(--muted)">(optional)</span></label>
+    <input id="telegram" class="input" placeholder="https://t.me/...">
+
+    <label>Metadata Mode</label>
+    <select id="metadataMode">
+      <option value="auto">Auto data: JSON URI</option>
+      <option value="custom">Custom / IPFS URI</option>
+    </select>
+
+    <div id="customUriWrap" style="display:none">
+      <label>Custom Metadata URI</label>
+      <input id="customUri" class="input" placeholder="ipfs://... or data:application/json,...">
+    </div>
+
+    <div class="meta-preview">
+      <div class="meta-top">
+        <b>Metadata Preview</b>
+        <span class="byte" id="metadataBytes">— bytes</span>
+      </div>
+      <pre id="metadataJson"></pre>
+    </div>
+
+    <div class="warning-box">
+      <strong>Real mainnet transaction.</strong> Clicking LAUNCH will ask your connected wallet to sign a transaction on HyperEVM. This file never asks for, stores, or transmits a private key or seed phrase.
+    </div>
+
+    <label class="check">
+      <input type="checkbox" id="ack">
+      <span>I understand that this creates a real token through the MotionMemeFactory, the transaction can cost HYPE, and I should not submit a second launch while the first transaction is pending.</span>
+    </label>
+
+    <div class="actions">
+      <button class="btn secondary" id="connectBtn">Connect Wallet</button>
+      <button class="btn secondary" id="switchBtn">Switch to HyperEVM</button>
+      <button class="btn primary" id="preflightBtn">Run Preflight</button>
+    </div>
+
+    <button class="btn danger big" id="launchBtn" disabled>🚀 Launch $LAWLESS Direct</button>
+
+    <div class="result" id="result">
+      <h3>Launch Confirmed</h3>
+      <div class="row"><b>Token:</b> <span id="resultToken"></span></div>
+      <div class="row"><b>Pool:</b> <span id="resultPool"></span></div>
+      <div class="row"><b>Transaction:</b> <span id="resultTx"></span></div>
+      <div>
+        <a id="tokenExplorer" target="_blank" rel="noopener">Token on HyperEVMScan</a>
+        <a id="txExplorer" target="_blank" rel="noopener">Transaction</a>
+        <a id="motionLink" target="_blank" rel="noopener">Open on motion.meme</a>
+      </div>
+    </div>
+
+    <div class="console" id="console">
+      <div class="log dim">LAWLESS DIRECT LAUNCHER // waiting for preflight...</div>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <h2>Live Factory Status</h2>
+    <p class="sub">Values below are queried from the factory/RPC when available. Do not rely on screenshots or old fee values.</p>
+
+    <div class="preview-token">
+      <img id="tokenPreviewImg" src="https://files.catbox.moe/s7cydo.png" alt="LAWLESS">
+      <div><h3 id="tokenPreviewName">$LAWLESS</h3><p>motion.meme // HyperEVM</p></div>
+    </div>
+
+    <div class="status-grid">
+      <div class="status"><span>Wallet</span><strong id="walletStatus">Not connected</strong></div>
+      <div class="status"><span>Network</span><strong id="networkStatus">Checking...</strong></div>
+      <div class="status"><span>Factory</span><strong class="cyan address">0x7211AdC46A9D777b9b21Ce472cb3C0aA85193C9c</strong></div>
+      <div class="status"><span>Factory Status</span><strong id="pausedStatus">Checking...</strong></div>
+      <div class="status"><span>Launch Fee</span><strong id="feeStatus">Checking...</strong></div>
+      <div class="status"><span>Total Supply</span><strong id="supplyStatus">Checking...</strong></div>
+      <div class="status"><span>Graduation Target</span><strong id="graduationStatus">Checking...</strong></div>
+      <div class="status"><span>Estimated Gas</span><strong id="gasStatus">Run preflight</strong></div>
+    </div>
+
+    <div class="note">
+      <strong>Reliability mode:</strong> initial buy is locked to <b>0 HYPE</b> here. The transaction value is the factory's live <code>launchFee()</code> only, and <code>minTokensOut</code> is therefore 0.
+    </div>
+
+    <div class="divider"></div>
+
+    <h3 style="margin:0 0 8px">What Preflight Checks</h3>
+    <div class="mini">
+      ✓ Chain ID is 999<br>
+      ✓ Factory is not paused<br>
+      ✓ Live launch fee is readable<br>
+      ✓ Name/symbol/metadata byte limits<br>
+      ✓ Wallet HYPE balance<br>
+      ✓ <code>createToken()</code> gas estimation succeeds<br>
+      ✓ No locally tracked launch transaction is still pending
+    </div>
+
+    <div class="divider"></div>
+
+    <h3 style="margin:0 0 8px">Pending Transaction Rule</h3>
+    <p class="mini">If your launch is pending, do <strong>not</strong> click launch again. Use your wallet's Speed Up / Replace function with the same nonce. A second fresh launch transaction can create a duplicate token.</p>
+    <div id="pendingBox" class="note" style="display:none;margin-top:12px"></div>
+    <button id="clearLockBtn" class="btn secondary" style="margin-top:10px;font-size:.72rem">Clear Local Pending Lock</button>
+
+    <div class="divider"></div>
+
+    <h3 style="margin:0 0 8px">Verified References</h3>
+    <div class="links">
+      <a href="https://hyperevmscan.io/address/0x7211adc46a9d777b9b21ce472cb3c0aa85193c9c#code" target="_blank" rel="noopener">Factory Contract ↗</a>
+      <a href="https://motion.meme/" target="_blank" rel="noopener">motion.meme ↗</a>
+      <a href="https://hyperevmscan.io/" target="_blank" rel="noopener">HyperEVMScan ↗</a>
+    </div>
+  </aside>
+</div>
+</main>
+
+<footer>
+<div class="container">
+  This utility is a direct contract interface, not an official motion.meme frontend. Always verify the factory address and wallet transaction details before signing. Factory configuration can change on-chain; the launcher reads critical values live before launch.
+</div>
+</footer>
+
+<script>
+const FACTORY = "0x7211AdC46A9D777b9b21Ce472cb3C0aA85193C9c";
+const CHAIN_ID = 999n;
+const CHAIN_HEX = "0x3e7";
+const RPC = "https://rpc.hyperliquid.xyz/evm";
+const EXPLORER = "https://hyperevmscan.io";
+const ABI = [
+  "function launchFee() view returns (uint256)",
+  "function paused() view returns (bool)",
+  "function TOTAL_SUPPLY() view returns (uint256)",
+  "function graduationTarget() view returns (uint256)",
+  "function MAX_NAME_BYTES() view returns (uint256)",
+  "function MAX_SYMBOL_BYTES() view returns (uint256)",
+  "function MAX_METADATA_URI_BYTES() view returns (uint256)",
+  "function launchCount() view returns (uint256)",
+  "function createToken(string name,string symbol,string metadataURI,uint256 minTokensOut,uint256 deadline) payable returns (address tokenAddress,address poolAddress)",
+  "event TokenCreated(address indexed token,address indexed pool,address indexed creator,string name,string symbol,string metadataURI)"
+];
+
+let browserProvider = null, signer = null, walletFactory = null;
+let readProvider = null, readFactory = null;
+let factoryState = null;
+let preflightOK = false;
+let estimatedGas = null;
+let connectedAddress = null;
+
+const $ = id => document.getElementById(id);
+const log = (msg, cls="") => {
+  const d=document.createElement("div"); d.className="log "+cls; d.textContent=msg;
+  $("console").appendChild(d); $("console").scrollTop=$("console").scrollHeight;
+};
+const utf8Bytes = s => new TextEncoder().encode(s).length;
+const short = a => a ? a.slice(0,6)+"…"+a.slice(-4) : "—";
+
+function buildMetadata(){
+  const name=$("name").value.trim(), symbol=$("symbol").value.trim(), description=$("description").value.trim();
+  const image=$("image").value.trim(), website=$("website").value.trim(), twitter=$("twitter").value.trim(), telegram=$("telegram").value.trim();
+  const meta={name,symbol,description};
+  if(image) meta.image=image;
+  if(website){meta.website=website;meta.external_url=website;}
+  if(twitter) meta.twitter=twitter;
+  if(telegram) meta.telegram=telegram;
+  return meta;
+}
+function metadataURI(){
+  if($("metadataMode").value==="custom") return $("customUri").value.trim();
+  return "data:application/json,"+encodeURIComponent(JSON.stringify(buildMetadata()));
+}
+function renderMetadata(){
+  const meta=buildMetadata();
+  $("metadataJson").textContent=JSON.stringify(meta,null,2);
+  const uri=metadataURI();
+  $("metadataBytes").textContent=utf8Bytes(uri)+" URI bytes";
+  $("tokenPreviewName").textContent="$"+($("symbol").value.trim()||"LAWLESS");
+  $("tokenPreviewImg").src=$("image").value.trim()||"https://files.catbox.moe/s7cydo.png";
+  preflightOK=false; $("launchBtn").disabled=true;
+}
+["name","symbol","description","image","website","twitter","telegram","customUri"].forEach(id=>{
+  const e=$(id); if(e) e.addEventListener("input",renderMetadata);
+});
+$("metadataMode").addEventListener("change",()=>{
+  $("customUriWrap").style.display=$("metadataMode").value==="custom"?"block":"none";
+  renderMetadata();
+});
+$("ack").addEventListener("change",()=>{$("launchBtn").disabled=!(preflightOK && $("ack").checked)});
+
+async function initRead(){
+  if(typeof ethers==="undefined"){
+    $("networkStatus").textContent="ethers.js failed to load";
+    $("networkStatus").className="bad";
+    log("ERROR: ethers.js CDN could not load. Check internet access.","err");
+    return;
+  }
+  try{
+    readProvider=new ethers.JsonRpcProvider(RPC, Number(CHAIN_ID), {staticNetwork:true});
+    readFactory=new ethers.Contract(FACTORY,ABI,readProvider);
+    await refreshFactory();
+    await restorePending();
+  }catch(e){
+    $("networkStatus").textContent="RPC unavailable";
+    $("networkStatus").className="bad";
+    log("Read RPC error: "+cleanError(e),"err");
+  }
+}
+async function refreshFactory(){
+  log("Reading live MotionMemeFactory state...","dim");
+  const [net,paused,fee,supply,graduation,maxName,maxSymbol,maxMeta,count] = await Promise.all([
+    readProvider.getNetwork(), readFactory.paused(), readFactory.launchFee(), readFactory.TOTAL_SUPPLY(),
+    readFactory.graduationTarget(), readFactory.MAX_NAME_BYTES(), readFactory.MAX_SYMBOL_BYTES(),
+    readFactory.MAX_METADATA_URI_BYTES(), readFactory.launchCount()
+  ]);
+  factoryState={paused,fee,supply,graduation,maxName,maxSymbol,maxMeta,count};
+  $("networkStatus").textContent = net.chainId===CHAIN_ID ? "HyperEVM #999 ✓" : "Unexpected chain";
+  $("networkStatus").className = net.chainId===CHAIN_ID ? "good" : "bad";
+  $("pausedStatus").textContent = paused ? "PAUSED ✕" : "LIVE ✓";
+  $("pausedStatus").className = paused ? "bad" : "good";
+  $("feeStatus").textContent=ethers.formatEther(fee)+" HYPE";
+  $("supplyStatus").textContent=Number(ethers.formatUnits(supply,18)).toLocaleString("en-US")+" tokens";
+  $("graduationStatus").textContent=ethers.formatEther(graduation)+" HYPE";
+  log(`Factory live: paused=${paused}, launchFee=${ethers.formatEther(fee)} HYPE, launches=${count}`,"ok");
+}
+async function connect(){
+  if(!window.ethereum){log("No injected wallet found. Open this file in a browser with MetaMask/Rabby.","err");return false}
+  try{
+    browserProvider=new ethers.BrowserProvider(window.ethereum);
+    await browserProvider.send("eth_requestAccounts",[]);
+    signer=await browserProvider.getSigner();
+    connectedAddress=await signer.getAddress();
+    walletFactory=new ethers.Contract(FACTORY,ABI,signer);
+    const net=await browserProvider.getNetwork();
+    $("walletStatus").textContent=short(connectedAddress);
+    $("walletStatus").className="good";
+    $("networkStatus").textContent=net.chainId===CHAIN_ID?"HyperEVM #999 ✓":"Wrong chain: "+net.chainId;
+    $("networkStatus").className=net.chainId===CHAIN_ID?"good":"warn";
+    log("Wallet connected: "+connectedAddress,"ok");
+    return true;
+  }catch(e){log("Wallet connection failed: "+cleanError(e),"err");return false}
+}
+async function switchNetwork(){
+  if(!window.ethereum){log("No injected wallet found.","err");return false}
+  try{
+    await window.ethereum.request({method:"wallet_switchEthereumChain",params:[{chainId:CHAIN_HEX}]});
+  }catch(e){
+    if(e.code===4902 || /Unrecognized chain|not added/i.test(e.message||"")){
+      await window.ethereum.request({method:"wallet_addEthereumChain",params:[{
+        chainId:CHAIN_HEX,chainName:"HyperEVM",nativeCurrency:{name:"HYPE",symbol:"HYPE",decimals:18},
+        rpcUrls:[RPC],blockExplorerUrls:[EXPLORER]
+      }]});
+    } else {log("Network switch failed: "+cleanError(e),"err");return false}
+  }
+  return connect();
+}
+function cleanError(e){
+  return e?.shortMessage || e?.reason || e?.info?.error?.message || e?.message || String(e);
+}
+async function ensureWalletChain(){
+  if(!signer){if(!await connect()) return false}
+  const net=await browserProvider.getNetwork();
+  if(net.chainId!==CHAIN_ID){log("Wallet is not on HyperEVM. Switching...","w"); if(!await switchNetwork())return false}
+  return true;
+}
+function validateFields(){
+  if(!factoryState) throw new Error("Factory state not loaded.");
+  const name=$("name").value.trim(), symbol=$("symbol").value.trim(), uri=metadataURI();
+  if(!name) throw new Error("Token name is required.");
+  if(!symbol) throw new Error("Token symbol is required.");
+  if(!uri) throw new Error("Metadata URI is required.");
+  const nb=utf8Bytes(name), sb=utf8Bytes(symbol), mb=utf8Bytes(uri);
+  if(nb>Number(factoryState.maxName)) throw new Error(`Name is ${nb} bytes; factory max is ${factoryState.maxName}.`);
+  if(sb>Number(factoryState.maxSymbol)) throw new Error(`Symbol is ${sb} bytes; factory max is ${factoryState.maxSymbol}.`);
+  if(mb>Number(factoryState.maxMeta)) throw new Error(`Metadata URI is ${mb} bytes; factory max is ${factoryState.maxMeta}. Use a shorter description or an IPFS URI.`);
+  if(factoryState.paused) throw new Error("Factory launches are currently paused on-chain.");
+  return {name,symbol,uri};
+}
+async function checkPending(){
+  const raw=localStorage.getItem("lawlessPendingTx");
+  if(!raw)return false;
+  try{
+    const p=JSON.parse(raw);
+    const receipt=await readProvider.getTransactionReceipt(p.hash);
+    if(!receipt){
+      $("pendingBox").style.display="block";
+      $("pendingBox").innerHTML=`Pending launch tracked locally:<br><span class="address">${p.hash}</span><br><br>Do not submit another launch. Speed up/replace this transaction in your wallet if necessary.`;
+      return true;
+    }
+    localStorage.removeItem("lawlessPendingTx");
+    $("pendingBox").style.display="none";
+    if(receipt.status===1) showReceipt(receipt);
+    return false;
+  }catch(e){return false}
+}
+async function restorePending(){
+  const pending=await checkPending();
+  if(pending){log("A locally tracked launch transaction is still pending. New launch blocked.","w")}
+}
+async function preflight(){
+  preflightOK=false;$("launchBtn").disabled=true;$("gasStatus").textContent="Checking...";
+  try{
+    await refreshFactory();
+    if(await checkPending()) throw new Error("A previous launch transaction is still pending.");
+    if(!await ensureWalletChain()) throw new Error("Wallet connection/network check failed.");
+    const {name,symbol,uri}=validateFields();
+    const walletAddr=await signer.getAddress();
+    const balance=await browserProvider.getBalance(walletAddr);
+    if(balance<=factoryState.fee) throw new Error(`Wallet balance ${ethers.formatEther(balance)} HYPE is not enough for launchFee + gas.`);
+    const deadline=BigInt(Math.floor(Date.now()/1000)+600);
+    log(`Estimating createToken("${name}","${symbol}", metadata, 0, +10min) with value ${ethers.formatEther(factoryState.fee)} HYPE...`,"dim");
+    estimatedGas=await walletFactory.createToken.estimateGas(name,symbol,uri,0n,deadline,{value:factoryState.fee});
+    const gasWithBuffer=estimatedGas*125n/100n;
+    const feeData=await browserProvider.getFeeData();
+    const gasPrice=feeData.maxFeePerGas || feeData.gasPrice || 0n;
+    const maxGasCost=gasWithBuffer*gasPrice;
+    const requiredBalance=factoryState.fee+maxGasCost;
+    if(gasPrice>0n && balance<requiredBalance){
+      throw new Error(`Wallet balance ${ethers.formatEther(balance)} HYPE may be insufficient. Approx. launch fee + buffered gas requires up to ${ethers.formatEther(requiredBalance)} HYPE at current fee data.`);
+    }
+    $("gasStatus").textContent=estimatedGas.toLocaleString()+" (est.)";
+    $("gasStatus").className="good";
+    log(`Preflight passed. Estimated gas ${estimatedGas}; launcher will use ~25% gas-limit buffer (${gasWithBuffer}).`,"ok");
+    log(`Wallet balance: ${ethers.formatEther(balance)} HYPE. Factory launch fee: ${ethers.formatEther(factoryState.fee)} HYPE.`,"ok");
+    if(gasPrice>0n) log(`Approx. buffered gas ceiling at current fee data: ${ethers.formatEther(maxGasCost)} HYPE.`,"dim");
+    preflightOK=true;
+    $("launchBtn").disabled=!$("ack").checked;
+  }catch(e){
+    $("gasStatus").textContent="Preflight failed";
+    $("gasStatus").className="bad";
+    log("PREFLIGHT FAILED: "+cleanError(e),"err");
+  }
+}
+async function launch(){
+  if(!preflightOK || !$("ack").checked){log("Run a successful preflight and accept the acknowledgement first.","w");return}
+  if(!await ensureWalletChain())return;
+  if(await checkPending()){log("Launch blocked: existing pending transaction.","err");return}
+  try{
+    await refreshFactory();
+    const {name,symbol,uri}=validateFields();
+    const deadline=BigInt(Math.floor(Date.now()/1000)+600);
+    const est=await walletFactory.createToken.estimateGas(name,symbol,uri,0n,deadline,{value:factoryState.fee});
+    const gasLimit=est*125n/100n;
+    const confirmation=confirm(
+`REAL HYPEREVM MAINNET LAUNCH
+
+Token: ${name} ($${symbol})
+Factory: ${FACTORY}
+Launch fee: ${ethers.formatEther(factoryState.fee)} HYPE
+Initial buy: 0 HYPE
+Deadline: +10 minutes
+Estimated gas: ${est}
+
+This can create a real token. Continue to wallet signature?`
+    );
+    if(!confirmation){log("Launch cancelled before wallet signature.","dim");return}
+    $("launchBtn").disabled=true;
+    log("Requesting wallet signature...","w");
+    const tx=await walletFactory.createToken(name,symbol,uri,0n,deadline,{value:factoryState.fee,gasLimit});
+    localStorage.setItem("lawlessPendingTx",JSON.stringify({hash:tx.hash,account:connectedAddress,time:Date.now()}));
+    log("Transaction submitted: "+tx.hash,"w");
+    log("IMPORTANT: do not launch again while this transaction is pending. Use wallet Speed Up/Replace if needed.","w");
+    $("pendingBox").style.display="block";
+    $("pendingBox").innerHTML=`Pending launch:<br><span class="address">${tx.hash}</span><br><br><a target="_blank" rel="noopener" href="${EXPLORER}/tx/${tx.hash}">View on HyperEVMScan ↗</a>`;
+    const receipt=await tx.wait(1);
+    localStorage.removeItem("lawlessPendingTx");
+    $("pendingBox").style.display="none";
+    if(receipt.status!==1) throw new Error("Transaction reverted.");
+    showReceipt(receipt);
+    log("LAUNCH CONFIRMED in block "+receipt.blockNumber+" ✓","ok");
+  }catch(e){
+    log("LAUNCH ERROR: "+cleanError(e),"err");
+    preflightOK=false;
+    $("launchBtn").disabled=true;
+  }
+}
+function showReceipt(receipt){
+  let token="",pool="";
+  for(const l of receipt.logs||[]){
+    try{
+      const parsed=readFactory.interface.parseLog(l);
+      if(parsed && parsed.name==="TokenCreated"){token=parsed.args.token;pool=parsed.args.pool;break}
+    }catch(e){}
+  }
+  $("result").classList.add("show");
+  $("resultTx").textContent=receipt.hash||receipt.transactionHash||"";
+  $("resultToken").textContent=token||"TokenCreated event not parsed — inspect transaction";
+  $("resultPool").textContent=pool||"—";
+  const txHash=receipt.hash||receipt.transactionHash||"";
+  $("txExplorer").href=`${EXPLORER}/tx/${txHash}`;
+  if(token){
+    $("tokenExplorer").href=`${EXPLORER}/address/${token}`;
+    $("motionLink").href=`https://motion.meme/coin/${token}`;
+  }else{
+    $("tokenExplorer").href=`${EXPLORER}/tx/${txHash}`;
+    $("motionLink").href="https://motion.meme/";
+  }
+}
+$("connectBtn").onclick=connect;
+$("switchBtn").onclick=switchNetwork;
+$("preflightBtn").onclick=preflight;
+$("launchBtn").onclick=launch;
+$("clearLockBtn").onclick=()=>{
+  if(confirm("Only clear this local lock if the previous launch transaction was dropped/replaced/confirmed. Clearing it does NOT cancel an on-chain pending transaction. Continue?")){
+    localStorage.removeItem("lawlessPendingTx");$("pendingBox").style.display="none";preflightOK=false;$("launchBtn").disabled=true;log("Local pending lock cleared. Run preflight again before any launch.","w");
+  }
+};
+if(window.ethereum){
+  window.ethereum.on?.("accountsChanged",()=>{signer=null;walletFactory=null;connectedAddress=null;preflightOK=false;$("launchBtn").disabled=true;connect()});
+  window.ethereum.on?.("chainChanged",()=>{signer=null;walletFactory=null;preflightOK=false;$("launchBtn").disabled=true;connect()});
+}
+renderMetadata();
+initRead();
+</script>
+</body>
+</html>
