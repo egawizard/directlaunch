@@ -121,7 +121,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line);padding:22px
     <div>
       <div class="kicker">⚡ Bypass the frontend. Call the factory directly.</div>
       <h1 data-text="$LAWLESS">$LAWLESS</h1>
-      <p class="lead">A single-file launcher that connects directly to the verified MotionMemeFactory on HyperEVM. It reads the factory state live, checks the fee and pause status, estimates the real launch transaction, then lets your wallet sign the factory call.</p>
+      <p class="lead">A single-file launcher that connects directly to the verified MotionMemeFactory on HyperEVM. It reads the factory state live, checks the fee and pause status, simulates the exact launch transaction including your atomic initial buy, then lets your wallet sign the factory call.</p>
     </div>
     <div class="hero-card"></div>
   </div>
@@ -131,7 +131,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line);padding:22px
 <div class="container layout">
   <section class="panel">
     <h2>Launch Configuration</h2>
-    <p class="sub">This launcher creates the token with <strong>no initial buy</strong>. Only the factory's live launch fee is sent. The deadline is generated automatically at signing time.</p>
+    <p class="sub">This launcher can execute an <strong>atomic initial buy</strong> inside the same <code>createToken()</code> transaction. The factory launch fee and your chosen initial-buy HYPE are sent together, so there is no separate transaction gap between creation and the creator buy.</p>
 
     <div class="two">
       <div>
@@ -164,6 +164,26 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line);padding:22px
     <label>Telegram <span style="color:var(--muted)">(optional)</span></label>
     <input id="telegram" class="input" placeholder="https://t.me/...">
 
+
+    <div style="margin-top:18px;padding:16px;border:1px solid rgba(60,239,255,.16);border-radius:18px;background:rgba(60,239,255,.045)">
+      <div class="two">
+        <div>
+          <label style="margin-top:0">Initial Buy (HYPE)</label>
+          <input id="initialBuy" class="input" inputmode="decimal" placeholder="e.g. 0.50" value="">
+        </div>
+        <div>
+          <label style="margin-top:0">minTokensOut</label>
+          <input id="minTokensOut" class="input" inputmode="numeric" value="0">
+        </div>
+      </div>
+      <div class="mini">
+        The initial buy is executed atomically by the factory during launch. <strong>minTokensOut = 0</strong> is compatibility mode and avoids quote-mismatch reverts, but it provides no minimum-output protection. Preflight still simulates the exact transaction before signing.
+      </div>
+      <div id="initialBuySummary" style="margin-top:11px;color:#cefaff;font-weight:800;font-size:.82rem">
+        Enter an initial-buy amount before preflight.
+      </div>
+    </div>
+
     <label>Metadata Mode</label>
     <select id="metadataMode">
       <option value="auto">Auto data: JSON URI</option>
@@ -189,7 +209,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line);padding:22px
 
     <label class="check">
       <input type="checkbox" id="ack">
-      <span>I understand that this creates a real token through the MotionMemeFactory, the transaction can cost HYPE, and I should not submit a second launch while the first transaction is pending.</span>
+      <span>I understand that this creates a real token and executes my chosen initial buy through the MotionMemeFactory in one mainnet transaction, can spend HYPE, and I should not submit a second launch while the first transaction is pending.</span>
     </label>
 
     <div class="actions">
@@ -232,13 +252,14 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line);padding:22px
       <div class="status"><span>Factory</span><strong class="cyan address">0x7211AdC46A9D777b9b21Ce472cb3C0aA85193C9c</strong></div>
       <div class="status"><span>Factory Status</span><strong id="pausedStatus">Checking...</strong></div>
       <div class="status"><span>Launch Fee</span><strong id="feeStatus">Checking...</strong></div>
+      <div class="status"><span>Initial Buy</span><strong id="initialBuyStatus">Not set</strong></div>
       <div class="status"><span>Total Supply</span><strong id="supplyStatus">Checking...</strong></div>
       <div class="status"><span>Graduation Target</span><strong id="graduationStatus">Checking...</strong></div>
       <div class="status"><span>Estimated Gas</span><strong id="gasStatus">Run preflight</strong></div>
     </div>
 
     <div class="note">
-      <strong>Reliability mode:</strong> initial buy is locked to <b>0 HYPE</b> here. The transaction value is the factory's live <code>launchFee()</code> only, and <code>minTokensOut</code> is therefore 0.
+      <strong>Atomic initial-buy mode:</strong> transaction value = live <code>launchFee()</code> + your chosen initial-buy HYPE. The creator buy happens inside the same <code>createToken()</code> transaction. This removes the separate creation→buy gap, but bots may still buy immediately after your launch transaction is included.
     </div>
 
     <div class="divider"></div>
@@ -249,8 +270,9 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line);padding:22px
       ✓ Factory is not paused<br>
       ✓ Live launch fee is readable<br>
       ✓ Name/symbol/metadata byte limits<br>
-      ✓ Wallet HYPE balance<br>
-      ✓ <code>createToken()</code> gas estimation succeeds<br>
+      ✓ Initial-buy amount and total HYPE value<br>
+      ✓ Wallet HYPE balance covers fee + initial buy + gas<br>
+      ✓ <code>createToken()</code> with the exact value passes gas simulation<br>
       ✓ No locally tracked launch transaction is still pending
     </div>
 
@@ -275,7 +297,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line);padding:22px
 
 <footer>
 <div class="container">
-  This utility is a direct contract interface with no external JavaScript library dependency, not an official motion.meme frontend. Always verify the factory address and wallet transaction details before signing. Factory configuration can change on-chain; the launcher reads critical values live before launch.
+  This utility is a direct contract interface with no external JavaScript library dependency, not an official motion.meme frontend. Always verify the factory address, initial-buy amount, total HYPE value, and wallet transaction details before signing. Factory configuration can change on-chain; the launcher reads critical values live before launch.
 </div>
 </footer>
 
@@ -390,6 +412,55 @@ function formatTokenSupply(v){
   return whole.toLocaleString("en-US");
 }
 
+
+function parseHypeDecimal(value){
+  const s = String(value ?? "").trim();
+  if(!s) return 0n;
+  if(!/^\d+(?:\.\d{0,18})?$/.test(s))
+    throw new Error("Initial Buy must be a positive HYPE number with at most 18 decimals.");
+  const [whole, frac=""] = s.split(".");
+  return BigInt(whole) * 10n**18n + BigInt((frac + "0".repeat(18)).slice(0,18));
+}
+
+function parseUintInput(value, label){
+  const s = String(value ?? "").trim();
+  if(!/^\d+$/.test(s)) throw new Error(label + " must be a non-negative integer.");
+  return BigInt(s);
+}
+
+function currentInitialBuy(){
+  return parseHypeDecimal($("initialBuy")?.value || "");
+}
+
+function currentMinTokensOut(){
+  return parseUintInput($("minTokensOut")?.value || "0", "minTokensOut");
+}
+
+function updateInitialBuyUI(){
+  try{
+    const buy = currentInitialBuy();
+    $("initialBuyStatus").textContent = buy > 0n ? formatEther(buy) + " HYPE" : "0 HYPE";
+    $("initialBuyStatus").className = buy > 0n ? "cyan" : "warn";
+    if(factoryState){
+      $("initialBuySummary").textContent =
+        "Total transaction value before gas: " +
+        formatEther(factoryState.fee + buy) +
+        " HYPE = " + formatEther(factoryState.fee) +
+        " launch fee + " + formatEther(buy) + " initial buy.";
+    }else{
+      $("initialBuySummary").textContent =
+        buy > 0n ? "Initial buy selected: " + formatEther(buy) + " HYPE." :
+        "Enter an initial-buy amount before preflight.";
+    }
+  }catch(e){
+    $("initialBuyStatus").textContent = "Invalid amount";
+    $("initialBuyStatus").className = "bad";
+    $("initialBuySummary").textContent = cleanError(e);
+  }
+  preflightOK = false;
+  $("launchBtn").disabled = true;
+}
+
 function toQty(v){
   return "0x" + BigInt(v).toString(16);
 }
@@ -489,6 +560,11 @@ function renderMetadata(){
   if(e) e.addEventListener("input", renderMetadata);
 });
 
+
+["initialBuy","minTokensOut"].forEach(id => {
+  $(id).addEventListener("input", updateInitialBuyUI);
+});
+
 $("metadataMode").addEventListener("change", () => {
   $("customUriWrap").style.display =
     $("metadataMode").value === "custom" ? "block" : "none";
@@ -540,6 +616,8 @@ async function refreshFactory(){
 
   $("graduationStatus").textContent =
     formatEther(factoryState.graduation) + " HYPE";
+
+  updateInitialBuyUI();
 
   log(
     "Factory live: paused=" + factoryState.paused +
@@ -731,27 +809,34 @@ async function preflight(){
       throw new Error("A previous launch transaction is still pending.");
 
     const {name,symbol,uri} = validateFields();
+    const initialBuy = currentInitialBuy();
+    const minTokensOut = currentMinTokensOut();
+    if(initialBuy <= 0n)
+      throw new Error("Enter an Initial Buy amount greater than 0 HYPE.");
+
+    const totalValue = factoryState.fee + initialBuy;
     const balanceHex = await walletRpc("eth_getBalance",[connectedAddress,"latest"]);
     const balance = BigInt(balanceHex);
 
-    if(balance <= factoryState.fee)
+    if(balance <= totalValue)
       throw new Error(
-        `Wallet balance ${formatEther(balance)} HYPE is not enough for launch fee + gas.`
+        `Wallet balance ${formatEther(balance)} HYPE is not enough for launch fee + initial buy + gas.`
       );
 
     const deadline = BigInt(Math.floor(Date.now()/1000) + 600);
-    const data = encodeCreateToken(name,symbol,uri,0n,deadline);
+    const data = encodeCreateToken(name,symbol,uri,minTokensOut,deadline);
 
     const txForEstimate = {
       from: connectedAddress,
       to: FACTORY,
-      value: toQty(factoryState.fee),
+      value: toQty(totalValue),
       data
     };
 
     log(
-      `Estimating createToken("${name}","${symbol}", metadata, 0, +10min) ` +
-      `with value ${formatEther(factoryState.fee)} HYPE...`,
+      `Estimating atomic launch + initial buy: createToken("${name}","${symbol}", metadata, ${minTokensOut}, +10min) ` +
+      `with total value ${formatEther(totalValue)} HYPE ` +
+      `(${formatEther(factoryState.fee)} fee + ${formatEther(initialBuy)} initial buy)...`,
       "dim"
     );
 
@@ -766,7 +851,7 @@ async function preflight(){
 
     if(gasPrice > 0n){
       const maxGasCost = gasWithBuffer * gasPrice;
-      const required = factoryState.fee + maxGasCost;
+      const required = totalValue + maxGasCost;
       if(balance < required){
         throw new Error(
           `Wallet balance ${formatEther(balance)} HYPE may be insufficient. ` +
@@ -790,7 +875,9 @@ async function preflight(){
     );
     log(
       `Wallet balance: ${formatEther(balance)} HYPE. ` +
-      `Factory launch fee: ${formatEther(factoryState.fee)} HYPE.`,
+      `Factory launch fee: ${formatEther(factoryState.fee)} HYPE. ` +
+      `Initial buy: ${formatEther(initialBuy)} HYPE. ` +
+      `Total before gas: ${formatEther(totalValue)} HYPE.`,
       "ok"
     );
 
@@ -835,15 +922,19 @@ async function launch(){
   try{
     await refreshFactory();
     const {name,symbol,uri} = validateFields();
+    const initialBuy = currentInitialBuy();
+    const minTokensOut = currentMinTokensOut();
+    if(initialBuy <= 0n) throw new Error("Initial Buy must be greater than 0 HYPE.");
+    const totalValue = factoryState.fee + initialBuy;
 
     /* Fresh deadline and fresh gas estimate immediately before signing. */
     const deadline = BigInt(Math.floor(Date.now()/1000) + 600);
-    const data = encodeCreateToken(name,symbol,uri,0n,deadline);
+    const data = encodeCreateToken(name,symbol,uri,minTokensOut,deadline);
 
     const baseTx = {
       from: connectedAddress,
       to: FACTORY,
-      value: toQty(factoryState.fee),
+      value: toQty(totalValue),
       data
     };
 
@@ -857,9 +948,15 @@ async function launch(){
 Token: ${name} ($${symbol})
 Factory: ${FACTORY}
 Launch fee: ${formatEther(factoryState.fee)} HYPE
-Initial buy: 0 HYPE
+Initial buy: ${formatEther(initialBuy)} HYPE
+Total value before gas: ${formatEther(totalValue)} HYPE
+minTokensOut: ${minTokensOut}
 Deadline: +10 minutes
 Estimated gas: ${freshGas}
+
+The initial buy is part of the SAME createToken transaction.
+Bots cannot insert a separate buy between token creation and this creator buy,
+but they can still trade immediately after your transaction lands.
 
 This can create a real token.
 Continue to wallet signature?`
@@ -995,6 +1092,7 @@ if(window.ethereum){
 }
 
 renderMetadata();
+updateInitialBuyUI();
 initRead();
 </script>
 </body>
